@@ -22,6 +22,16 @@ type ActiveBomb = {
   spark: Phaser.GameObjects.Arc;
 };
 
+type PickupType = "medkit" | "armor" | "ammo";
+
+type ActivePickup = {
+  type: PickupType;
+  x: number;
+  y: number;
+  radius: number;
+  objects: Phaser.GameObjects.GameObject[];
+};
+
 export default class GameScene extends Phaser.Scene {
   private readonly countdownMusicMultiplier = 0.65;
   private readonly musicFadeStepMs = 40;
@@ -48,6 +58,8 @@ export default class GameScene extends Phaser.Scene {
   private bulletYOffset = -6;
   private readonly muzzleFlashMs = 90;
   private readonly playerShotIntervalMs = 220;
+  private readonly ammoBurstShotIntervalMs = 120;
+  private readonly ammoBurstDurationMs = 8000;
   private readonly playerBulletSpeed = 330;
   private playerBulletMaxRangePx = 520;
   private playerBulletYOffsetGround = -38;
@@ -62,7 +74,7 @@ export default class GameScene extends Phaser.Scene {
   private playerBulletHitOffsetY = -4;
   private playerBulletHitWidth = 18;
   private playerBulletHitHeight = 8;
-  private readonly worldWidth = 4200;
+  private readonly worldWidth = 12000;
   private platformSideBlockExtraWidth = 0;
   private platformEarlyBlockDistance = 30;
   private platformSideBlockWidth = 18;
@@ -76,6 +88,10 @@ export default class GameScene extends Phaser.Scene {
   private readonly bombExplosionRadius = 170;
   private readonly bombSpawnAheadMin = 150;
   private readonly bombSpawnAheadMax = 520;
+  private readonly pickupSpawnMinDelayMs = 6500;
+  private readonly pickupSpawnMaxDelayMs = 12500;
+  private readonly pickupSpawnAheadMin = 120;
+  private readonly pickupSpawnAheadMax = 520;
   private boomNoiseBuffer: AudioBuffer | null = null;
   private shotNoiseBuffer: AudioBuffer | null = null;
   private masterSoundVolume = 0.78;
@@ -95,12 +111,18 @@ export default class GameScene extends Phaser.Scene {
   private hudKillsEl: HTMLElement | null = null;
   private hudStatusEl: HTMLElement | null = null;
   private missionOverlayText: Phaser.GameObjects.Text | null = null;
+  private powerupOverlayText: Phaser.GameObjects.Text | null = null;
+  private powerupOverlayExpiresAt = 0;
   private countdownOverlayText: Phaser.GameObjects.Text | null = null;
   private introCountdownActive = true;
   private hamasBullets: Phaser.GameObjects.Image[] = [];
   private playerBullets: Phaser.GameObjects.Image[] = [];
   private activeBomb: ActiveBomb | null = null;
   private nextBombSpawnAt = 0;
+  private activePickup: ActivePickup | null = null;
+  private nextPickupSpawnAt = 0;
+  private armorShieldCharges = 0;
+  private ammoBurstActiveUntil = 0;
   private levelMusic: Phaser.Sound.BaseSound | null = null;
 
   constructor() {
@@ -199,6 +221,10 @@ export default class GameScene extends Phaser.Scene {
     this.platformSideBlockers = [];
     this.activeBomb = null;
     this.nextBombSpawnAt = 0;
+    this.activePickup = null;
+    this.nextPickupSpawnAt = 0;
+    this.armorShieldCharges = 0;
+    this.ammoBurstActiveUntil = 0;
     this.loadCollisionConfig();
     this.loadCombatConfig();
 
@@ -247,6 +273,7 @@ export default class GameScene extends Phaser.Scene {
     this.createMissionOverlay();
     this.startIntroCountdown();
     this.scheduleNextBombSpawn();
+    this.scheduleNextPickupSpawn();
 
     const bulletGraphic = this.make.graphics({ x: 0, y: 0 });
     // Left-facing bullet: copper tip (left), steel body, warm tracer tail (right)
@@ -296,10 +323,13 @@ export default class GameScene extends Phaser.Scene {
 
     if (this.introCountdownActive) {
       this.hamasFighter.setAnimationState("idle");
+      this.updatePowerupOverlay();
       return;
     }
 
     this.updateBombSystem();
+    this.updatePickupSystem();
+    this.updatePowerupOverlay();
 
     const playerBounds = this.player.getCombatHitBounds();
     const playerBoundInset = this.player.isDucking() ? 1 : 2;
@@ -403,7 +433,7 @@ export default class GameScene extends Phaser.Scene {
     }
 
     if (!this.playerIsDead && !this.player.isDeadState() && this.missionState === "running") {
-      const playerCanShoot = this.time.now - this.lastPlayerShotTime >= this.playerShotIntervalMs;
+      const playerCanShoot = this.time.now - this.lastPlayerShotTime >= this.getCurrentPlayerShotIntervalMs();
       if (playerCanShoot && this.player.isFireHeld()) {
         this.lastPlayerShotTime = this.time.now;
 
@@ -754,7 +784,7 @@ export default class GameScene extends Phaser.Scene {
     let xFar = 0;
     while (xFar < width) {
       const blockWidth = Phaser.Math.Between(36, 80);
-      const blockHeight = Phaser.Math.Between(90, 170);
+      const blockHeight = Phaser.Math.Between(135, 255);
       const topY = height - 40 - blockHeight;
       skylineFar.fillRect(xFar, topY, blockWidth, blockHeight);
 
@@ -783,7 +813,7 @@ export default class GameScene extends Phaser.Scene {
     let xNear = -10;
     while (xNear < width + 20) {
       const blockWidth = Phaser.Math.Between(44, 96);
-      const blockHeight = Phaser.Math.Between(70, 130);
+      const blockHeight = Phaser.Math.Between(105, 195);
       const topY = height - 30 - blockHeight;
       skylineNear.fillRect(xNear, topY, blockWidth, blockHeight);
 
@@ -1155,6 +1185,161 @@ export default class GameScene extends Phaser.Scene {
 
     this.clearActiveBomb();
     this.scheduleNextBombSpawn();
+  }
+
+  private updatePickupSystem() {
+    if (this.missionState !== "running") {
+      return;
+    }
+
+    if (!this.activePickup) {
+      if (this.time.now >= this.nextPickupSpawnAt) {
+        this.spawnPickup();
+      }
+      return;
+    }
+
+    if (this.playerIsDead) {
+      return;
+    }
+
+    const pickup = this.activePickup;
+    const playerBounds = this.player.getHitBounds();
+    const playerPickupBounds = new Phaser.Geom.Rectangle(
+      playerBounds.x - 8,
+      playerBounds.y - 4,
+      playerBounds.width + 16,
+      playerBounds.height + 14
+    );
+    const pickupBounds = new Phaser.Geom.Rectangle(
+      pickup.x - pickup.radius,
+      pickup.y - pickup.radius,
+      pickup.radius * 2,
+      pickup.radius * 2
+    );
+
+    if (Phaser.Geom.Intersects.RectangleToRectangle(playerPickupBounds, pickupBounds)) {
+      this.applyPickup(pickup.type);
+      this.clearActivePickup();
+      this.scheduleNextPickupSpawn();
+    }
+  }
+
+  private spawnPickup() {
+    const pos = this.pickPickupSpawnPosition();
+    if (!pos) {
+      this.scheduleNextPickupSpawn();
+      return;
+    }
+
+    const typeRoll = Phaser.Math.Between(0, 99);
+    const type: PickupType = typeRoll < 34 ? "medkit" : typeRoll < 67 ? "armor" : "ammo";
+
+    const radius = 16;
+    const glowColor = type === "medkit" ? 0xff6b6b : type === "armor" ? 0x62b6ff : 0xffd166;
+    const coreColor = type === "medkit" ? 0xe24a4a : type === "armor" ? 0x3f8ed8 : 0xd49b3a;
+    const labelText = type === "medkit" ? "+" : type === "armor" ? "S" : "A";
+
+    const glow = this.add.circle(pos.x, pos.y, radius + 7, glowColor, 0.22);
+    glow.setDepth(22);
+
+    const core = this.add.circle(pos.x, pos.y, radius, coreColor, 0.95);
+    core.setDepth(23);
+    core.setStrokeStyle(2, 0xffffff, 0.5);
+
+    const label = this.add.text(pos.x, pos.y, labelText, {
+      fontFamily: "Arial",
+      fontSize: "18px",
+      color: "#ffffff",
+      fontStyle: "bold",
+      stroke: "#102030",
+      strokeThickness: 3,
+    });
+    label.setOrigin(0.5);
+    label.setDepth(24);
+
+    const objects: Phaser.GameObjects.GameObject[] = [glow, core, label];
+
+    this.tweens.add({
+      targets: objects,
+      y: "-=6",
+      duration: 620,
+      yoyo: true,
+      repeat: -1,
+      ease: "Sine.easeInOut",
+    });
+
+    this.activePickup = {
+      type,
+      x: pos.x,
+      y: pos.y,
+      radius: radius + 6,
+      objects,
+    };
+  }
+
+  private pickPickupSpawnPosition() {
+    const minX = Phaser.Math.Clamp(this.player.x + this.pickupSpawnAheadMin, 80, this.worldWidth - 80);
+    const maxX = Phaser.Math.Clamp(this.player.x + this.pickupSpawnAheadMax, 80, this.worldWidth - 80);
+    const groundTopY = this.ground.y - this.ground.displayHeight * 0.5;
+    const pickupY = groundTopY - 20;
+
+    if (maxX <= minX) {
+      return null;
+    }
+
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const x = Phaser.Math.Between(minX, Math.max(minX + 1, maxX));
+      if (this.isUnderPlatformSpan(x)) {
+        continue;
+      }
+      if (x <= this.player.x + 70) {
+        continue;
+      }
+      return { x, y: pickupY };
+    }
+
+    return null;
+  }
+
+  private scheduleNextPickupSpawn() {
+    const delay = Phaser.Math.Between(this.pickupSpawnMinDelayMs, this.pickupSpawnMaxDelayMs);
+    this.nextPickupSpawnAt = this.time.now + delay;
+  }
+
+  private clearActivePickup() {
+    if (!this.activePickup) {
+      return;
+    }
+
+    for (const object of this.activePickup.objects) {
+      object.destroy();
+    }
+    this.activePickup = null;
+  }
+
+  private applyPickup(type: PickupType) {
+    if (type === "medkit") {
+      this.lives += 1;
+      this.refreshHud();
+      this.showPowerupStatus("Medkit collected: +1 Life", "#86efac");
+      return;
+    }
+
+    if (type === "armor") {
+      this.armorShieldCharges = 1;
+      this.showPowerupStatus("Armor collected: Shield ready", "#93c5fd");
+      return;
+    }
+
+    this.ammoBurstActiveUntil = this.time.now + this.ammoBurstDurationMs;
+    this.showPowerupStatus("Ammo Burst: 8.0s", "#fbbf24", this.ammoBurstDurationMs);
+  }
+
+  private getCurrentPlayerShotIntervalMs() {
+    return this.time.now < this.ammoBurstActiveUntil
+      ? this.ammoBurstShotIntervalMs
+      : this.playerShotIntervalMs;
   }
 
   private clearActiveBomb() {
@@ -1690,6 +1875,8 @@ export default class GameScene extends Phaser.Scene {
 
   private createMissionOverlay() {
     this.missionOverlayText?.destroy();
+    this.powerupOverlayText?.destroy();
+
     this.missionOverlayText = this.add.text(
       this.scale.width * 0.5,
       22,
@@ -1707,6 +1894,20 @@ export default class GameScene extends Phaser.Scene {
     this.missionOverlayText.setDepth(300);
     this.missionOverlayText.setScrollFactor(0);
     this.missionOverlayText.setShadow(0, 0, "#7ec8ff", 18, true, true);
+
+    this.powerupOverlayText = this.add.text(this.scale.width * 0.5, 58, "", {
+      fontFamily: "Arial",
+      fontSize: "22px",
+      color: "#fbbf24",
+      fontStyle: "bold",
+      stroke: "#0b1a30",
+      strokeThickness: 4,
+    });
+    this.powerupOverlayText.setOrigin(0.5, 0);
+    this.powerupOverlayText.setDepth(299);
+    this.powerupOverlayText.setScrollFactor(0);
+    this.powerupOverlayText.setShadow(0, 0, "#7ec8ff", 18, true, true);
+    this.powerupOverlayExpiresAt = 0;
   }
 
   private startIntroCountdown() {
@@ -1834,6 +2035,48 @@ export default class GameScene extends Phaser.Scene {
     this.levelMusic = null;
   }
 
+  private showPowerupStatus(message: string, color: string, durationMs = 1600) {
+    if (!this.powerupOverlayText) {
+      return;
+    }
+
+    this.powerupOverlayText.setText(message);
+    this.powerupOverlayText.setColor(color);
+    this.powerupOverlayText.setShadow(0, 0, "#7ec8ff", 18, true, true);
+    this.powerupOverlayExpiresAt = this.time.now + durationMs;
+  }
+
+  private updatePowerupOverlay() {
+    if (!this.powerupOverlayText) {
+      return;
+    }
+
+    if (this.missionState !== "running") {
+      this.powerupOverlayText.setText("");
+      return;
+    }
+
+    const ammoRemainingMs = this.ammoBurstActiveUntil - this.time.now;
+    if (ammoRemainingMs > 0) {
+      const remainingSec = Math.max(0, ammoRemainingMs / 1000);
+      this.powerupOverlayText.setText(`Ammo Burst: ${remainingSec.toFixed(1)}s`);
+      this.powerupOverlayText.setColor("#fbbf24");
+      this.powerupOverlayText.setShadow(0, 0, "#7ec8ff", 18, true, true);
+      return;
+    }
+
+    if (this.armorShieldCharges > 0) {
+      this.powerupOverlayText.setText("Shield: Ready");
+      this.powerupOverlayText.setColor("#93c5fd");
+      this.powerupOverlayText.setShadow(0, 0, "#7ec8ff", 18, true, true);
+      return;
+    }
+
+    if (this.time.now >= this.powerupOverlayExpiresAt) {
+      this.powerupOverlayText.setText("");
+    }
+  }
+
   private refreshHud() {
     if (this.hudLivesEl) {
       this.hudLivesEl.textContent = `Lives: ${this.lives}`;
@@ -1845,6 +2088,12 @@ export default class GameScene extends Phaser.Scene {
 
   private handlePlayerHit() {
     if (this.playerIsDead) return;
+
+    if (this.armorShieldCharges > 0) {
+      this.armorShieldCharges -= 1;
+      this.showPowerupStatus("Shield absorbed the hit", "#93c5fd", 1200);
+      return;
+    }
 
     this.playPlayerDeathSound();
     this.player.die();
@@ -1880,6 +2129,7 @@ export default class GameScene extends Phaser.Scene {
   private winMission() {
     this.missionState = "won";
     this.stopLevelMusic();
+    this.clearActivePickup();
     const finalLevel = this.currentLevel >= this.maxLevels;
 
     if (this.missionOverlayText) {
@@ -1901,6 +2151,7 @@ export default class GameScene extends Phaser.Scene {
   private failMission(label: string) {
     this.missionState = "lost";
     this.stopLevelMusic();
+    this.clearActivePickup();
     if (this.missionOverlayText) {
       this.missionOverlayText.setText(label);
       this.missionOverlayText.setColor("#fca5a5");
