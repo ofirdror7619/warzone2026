@@ -1,23 +1,29 @@
 import Phaser from "phaser";
 
+type HamasVisualVariant = "hamas1" | "hamas2";
+
 export default class HamasFighter extends Phaser.Physics.Arcade.Sprite {
-  private readonly baseScale = 0.52;
+  private readonly baseScaleHamas1 = 0.52;
+  private readonly baseScaleHamas2 = 0.68;
   private animationState: "idle" | "firing" | "dying";
+  private visualVariant: HamasVisualVariant;
 
   constructor(
     scene: Phaser.Scene,
     x: number,
     y: number,
-    animationState: "idle" | "firing" | "dying" = "idle"
+    animationState: "idle" | "firing" | "dying" = "idle",
+    visualVariant: HamasVisualVariant = "hamas1"
   ) {
-    super(scene, x, y, "hamas_idle");
+    super(scene, x, y, visualVariant === "hamas2" ? "hamas2_idle" : "hamas_idle");
 
     this.animationState = animationState;
+    this.visualVariant = visualVariant;
 
     scene.add.existing(this);
     scene.physics.add.existing(this);
 
-    this.setScale(this.baseScale);
+    this.setScale(this.visualVariant === "hamas2" ? this.baseScaleHamas2 : this.baseScaleHamas1);
     this.setDepth(7);
     this.setFlipX(true); // Face left towards the soldier
 
@@ -30,58 +36,96 @@ export default class HamasFighter extends Phaser.Physics.Arcade.Sprite {
     this.setCollideWorldBounds(true);
 
     this.createAnimations(scene);
-    this.play(`hamas_${this.animationState}`, true);
+    this.play(this.resolveAnimationKey(this.animationState), true);
   }
 
   private createAnimations(scene: Phaser.Scene) {
-    // Remove existing animations if they exist
-    const animationKeys = ["hamas_idle", "hamas_firing", "hamas_running", "hamas_dying"];
-    for (const key of animationKeys) {
-      if (scene.anims.exists(key)) {
-        scene.anims.remove(key);
-      }
+    if (!scene.anims.exists("hamas_dying")) {
+      scene.anims.create({
+        key: "hamas_dying",
+        frames: scene.anims.generateFrameNumbers("hamas_dying", { start: 0, end: 4 }),
+        frameRate: 8,
+        repeat: 0,
+      });
     }
 
-    // Create idle animation (2 frames)
-    scene.anims.create({
-      key: "hamas_idle",
-      frames: scene.anims.generateFrameNumbers("hamas_idle", { start: 0, end: 1 }),
-      frameRate: 2,
-      repeat: -1,
-    });
+    if (this.visualVariant === "hamas2") {
+      if (!scene.anims.exists("hamas2_dying")) {
+        scene.anims.create({
+          key: "hamas2_dying",
+          frames: scene.anims.generateFrameNumbers("hamas2_dying", { start: 0, end: 3 }),
+          frameRate: 8,
+          repeat: 0,
+        });
+      }
 
-    // Create firing animation (4 frames)
-    scene.anims.create({
-      key: "hamas_firing",
-      frames: scene.anims.generateFrameNumbers("hamas_firing", { start: 0, end: 3 }),
-      frameRate: 8,
-      repeat: -1,
-    });
+      if (!scene.anims.exists("hamas2_idle")) {
+        scene.anims.create({
+          key: "hamas2_idle",
+          frames: scene.anims.generateFrameNumbers("hamas2_idle", { start: 0, end: 2 }),
+          frameRate: 3,
+          repeat: -1,
+        });
+      }
 
-    // Create running animation (8 frames)
-    scene.anims.create({
-      key: "hamas_running",
-      frames: scene.anims.generateFrameNumbers("hamas_running", { start: 0, end: 7 }),
-      frameRate: 10,
-      repeat: -1,
-    });
+      if (!scene.anims.exists("hamas2_throwing")) {
+        scene.anims.create({
+          key: "hamas2_throwing",
+          frames: scene.anims.generateFrameNumbers("hamas2_throw", { start: 0, end: 3 }),
+          frameRate: 10,
+          repeat: -1,
+        });
+      }
+      return;
+    }
 
-    // Create dying animation (5 frames)
-    scene.anims.create({
-      key: "hamas_dying",
-      frames: scene.anims.generateFrameNumbers("hamas_dying", { start: 0, end: 4 }),
-      frameRate: 8,
-      repeat: 0,
-    });
+    if (!scene.anims.exists("hamas_idle")) {
+      scene.anims.create({
+        key: "hamas_idle",
+        frames: scene.anims.generateFrameNumbers("hamas_idle", { start: 0, end: 1 }),
+        frameRate: 2,
+        repeat: -1,
+      });
+    }
+
+    if (!scene.anims.exists("hamas_firing")) {
+      scene.anims.create({
+        key: "hamas_firing",
+        frames: scene.anims.generateFrameNumbers("hamas_firing", { start: 0, end: 3 }),
+        frameRate: 8,
+        repeat: -1,
+      });
+    }
+
+    if (!scene.anims.exists("hamas_running")) {
+      scene.anims.create({
+        key: "hamas_running",
+        frames: scene.anims.generateFrameNumbers("hamas_running", { start: 0, end: 7 }),
+        frameRate: 10,
+        repeat: -1,
+      });
+    }
+  }
+
+  private resolveAnimationKey(state: "idle" | "firing" | "dying") {
+    if (state === "dying") {
+      return this.visualVariant === "hamas2" ? "hamas2_dying" : "hamas_dying";
+    }
+
+    if (this.visualVariant === "hamas2") {
+      return state === "firing" ? "hamas2_throwing" : "hamas2_idle";
+    }
+
+    return state === "firing" ? "hamas_firing" : "hamas_idle";
   }
 
   public update() {
-    const targetKey = `hamas_${this.animationState}`;
+    const targetKey = this.resolveAnimationKey(this.animationState);
     const currentKey = this.anims.currentAnim?.key;
 
     if (this.animationState === "dying") {
-      if (currentKey !== "hamas_dying") {
-        this.play("hamas_dying", true);
+      if (currentKey !== targetKey) {
+        this.play(targetKey, true);
       }
       return;
     }

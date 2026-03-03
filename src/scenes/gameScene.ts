@@ -2,13 +2,16 @@ import Phaser from "phaser";
 import Player from "../entities/player";
 import HamasFighter from "../entities/hamasFighter";
 import type { ExtendedGameConfig, GameplayCollisionConfig, GameplayCombatConfig } from "../config/gameConfig";
-import soldierSprite2 from "../assets/sprites/soldier_idle_walk_fire_jump_combined.png";
-import soldierDyingSprite from "../assets/sprites/soldier_dying_transparent.png";
-import soldierDuckSprite from "../assets/sprites/soldier_duck_transparent.png";
-import hamasIdleSprite from "../assets/sprites/hamas_idle_transparent.png";
-import hamasFiringSprite from "../assets/sprites/hamas_firing_transparent.png";
-import hamasRunningSprite from "../assets/sprites/hamas_running_transparent.png";
-import hamasDyingSprite from "../assets/sprites/hamas_dying_transparent.png";
+import soldierSprite2 from "../assets/hamas-1-sprites/soldier_idle_walk_fire_jump_combined.png";
+import soldierDyingSprite from "../assets/hamas-1-sprites/soldier_dying_transparent.png";
+import soldierDuckSprite from "../assets/hamas-1-sprites/soldier_duck_transparent.png";
+import hamasIdleSprite from "../assets/hamas-1-sprites/hamas_idle_transparent.png";
+import hamasFiringSprite from "../assets/hamas-1-sprites/hamas_firing_transparent.png";
+import hamasRunningSprite from "../assets/hamas-1-sprites/hamas_running_transparent.png";
+import hamasDyingSprite from "../assets/hamas-1-sprites/hamas_dying_transparent.png";
+import hamas2IdleSprite from "../assets/hamas-2-sprites/hamas2_idle_transparent.png";
+import hamas2ThrowSprite from "../assets/hamas-2-sprites/hamas2_throw_transparent.png";
+import hamas2DyingSprite from "../assets/hamas-2-sprites/hamas2_dying_transparent.png";
 
 type ActiveBomb = {
   x: number;
@@ -32,13 +35,20 @@ type ActivePickup = {
   objects: Phaser.GameObjects.GameObject[];
 };
 
+type ActiveEnemyGrenade = {
+  body: Phaser.GameObjects.Arc;
+  velocityX: number;
+  velocityY: number;
+  explodeAt: number;
+};
+
 export default class GameScene extends Phaser.Scene {
   private readonly countdownMusicMultiplier = 0.65;
   private readonly musicFadeStepMs = 40;
   private readonly maxLevels = 4;
   private currentLevel = 1;
   private pendingLives: number | null = null;
-  private enemyVariant: "standard" | "assault" = "standard";
+  private enemyVariant: "standard" | "assault" | "grenadier" = "standard";
   private player!: Player;
   private hamasFighter!: HamasFighter;
   private ground!: Phaser.GameObjects.Rectangle;
@@ -51,6 +61,7 @@ export default class GameScene extends Phaser.Scene {
   private readonly firstShotDelayMs = 450;
   private readonly standardShotIntervalMs = 1300;
   private readonly assaultShotIntervalMs = 780;
+  private readonly grenadeThrowIntervalMs = 1750;
   private readonly bulletSpeed = 110;
   private readonly maxActiveBullets = 2;
   private readonly minBulletGapPx = 140;
@@ -88,6 +99,11 @@ export default class GameScene extends Phaser.Scene {
   private readonly bombExplosionRadius = 170;
   private readonly bombSpawnAheadMin = 150;
   private readonly bombSpawnAheadMax = 520;
+  private readonly grenadeExplosionRadius = 170;
+  private readonly grenadeGravity = 620;
+  private readonly grenadeFlightMs = 950;
+  private readonly grenadeFixedVelocityX = -500;
+  private readonly grenadeFixedVelocityY = -285;
   private readonly pickupSpawnMinDelayMs = 6500;
   private readonly pickupSpawnMaxDelayMs = 12500;
   private readonly pickupSpawnAheadMin = 120;
@@ -116,6 +132,7 @@ export default class GameScene extends Phaser.Scene {
   private countdownOverlayText: Phaser.GameObjects.Text | null = null;
   private introCountdownActive = true;
   private hamasBullets: Phaser.GameObjects.Image[] = [];
+  private enemyGrenades: ActiveEnemyGrenade[] = [];
   private playerBullets: Phaser.GameObjects.Image[] = [];
   private activeBomb: ActiveBomb | null = null;
   private nextBombSpawnAt = 0;
@@ -179,6 +196,27 @@ export default class GameScene extends Phaser.Scene {
       spacing: 0,
     });
 
+    this.load.spritesheet("hamas2_idle", hamas2IdleSprite, {
+      frameWidth: 256,
+      frameHeight: 256,
+      margin: 0,
+      spacing: 0,
+    });
+
+    this.load.spritesheet("hamas2_throw", hamas2ThrowSprite, {
+      frameWidth: 256,
+      frameHeight: 256,
+      margin: 0,
+      spacing: 0,
+    });
+
+    this.load.spritesheet("hamas2_dying", hamas2DyingSprite, {
+      frameWidth: 256,
+      frameHeight: 256,
+      margin: 0,
+      spacing: 0,
+    });
+
     this.load.audio("level_music_1", new URL("../assets/music/music-for-level-1.mp3", import.meta.url).toString());
   }
 
@@ -199,7 +237,7 @@ export default class GameScene extends Phaser.Scene {
 
   create() {
     this.hamasIsDead = false;
-    this.enemyVariant = "standard";
+    this.enemyVariant = "grenadier";
     this.playerIsDead = false;
     this.playerDeathTime = 0;
     this.lastShotTime = 0;
@@ -216,6 +254,7 @@ export default class GameScene extends Phaser.Scene {
     this.missionState = "running";
     this.introCountdownActive = true;
     this.hamasBullets = [];
+    this.enemyGrenades = [];
     this.playerBullets = [];
     this.platforms = [];
     this.platformSideBlockers = [];
@@ -328,6 +367,7 @@ export default class GameScene extends Phaser.Scene {
     }
 
     this.updateBombSystem();
+    this.updateEnemyGrenades(delta);
     this.updatePickupSystem();
     this.updatePowerupOverlay();
 
@@ -521,51 +561,64 @@ export default class GameScene extends Phaser.Scene {
 
       this.hamasFighter.setAnimationState("firing");
 
-      const activeBulletCount = this.hamasBullets.length;
-      const readyToStartShooting = this.time.now - this.firingRangeEnteredAt >= this.firstShotDelayMs;
-      const muzzleX = this.hamasFighter.x + this.bulletSpawnXOffset;
-      const nearestBulletX =
-        this.hamasBullets.length > 0 ? Math.max(...this.hamasBullets.map((bullet) => bullet.x)) : Number.NEGATIVE_INFINITY;
-      const hasEnoughGap =
-        this.hamasBullets.length === 0 || muzzleX - nearestBulletX >= this.minBulletGapPx;
+      if (this.enemyVariant === "grenadier") {
+        const readyToStartThrowing = this.time.now - this.firingRangeEnteredAt >= this.firstShotDelayMs;
+        const canThrow = this.enemyGrenades.length < 1;
+        if (
+          readyToStartThrowing &&
+          canThrow &&
+          this.time.now - this.lastShotTime >= this.getCurrentShotIntervalMs()
+        ) {
+          this.lastShotTime = this.time.now;
+          this.throwEnemyGrenade();
+        }
+      } else {
+        const activeBulletCount = this.hamasBullets.length;
+        const readyToStartShooting = this.time.now - this.firingRangeEnteredAt >= this.firstShotDelayMs;
+        const muzzleX = this.hamasFighter.x + this.bulletSpawnXOffset;
+        const nearestBulletX =
+          this.hamasBullets.length > 0 ? Math.max(...this.hamasBullets.map((bullet) => bullet.x)) : Number.NEGATIVE_INFINITY;
+        const hasEnoughGap =
+          this.hamasBullets.length === 0 || muzzleX - nearestBulletX >= this.minBulletGapPx;
 
-      if (
-        readyToStartShooting &&
-        hasEnoughGap &&
-        activeBulletCount < this.maxActiveBullets &&
-        this.time.now - this.lastShotTime >= this.getCurrentShotIntervalMs()
-      ) {
-        this.lastShotTime = this.time.now;
+        if (
+          readyToStartShooting &&
+          hasEnoughGap &&
+          activeBulletCount < this.maxActiveBullets &&
+          this.time.now - this.lastShotTime >= this.getCurrentShotIntervalMs()
+        ) {
+          this.lastShotTime = this.time.now;
 
-        const muzzleY = this.hamasFighter.y + this.bulletYOffset;
+          const muzzleY = this.hamasFighter.y + this.bulletYOffset;
 
-        const muzzleFlash = this.add.triangle(
-          muzzleX - 7,
-          muzzleY,
-          0,
-          0,
-          16,
-          4,
-          16,
-          -4,
-          0xffd166
-        );
-        muzzleFlash.setDepth(25);
-        this.tweens.add({
-          targets: muzzleFlash,
-          alpha: 0,
-          duration: this.muzzleFlashMs,
-          onComplete: () => muzzleFlash.destroy(),
-        });
+          const muzzleFlash = this.add.triangle(
+            muzzleX - 7,
+            muzzleY,
+            0,
+            0,
+            16,
+            4,
+            16,
+            -4,
+            0xffd166
+          );
+          muzzleFlash.setDepth(25);
+          this.tweens.add({
+            targets: muzzleFlash,
+            alpha: 0,
+            duration: this.muzzleFlashMs,
+            onComplete: () => muzzleFlash.destroy(),
+          });
 
-        const bullet = this.add.image(
-          muzzleX,
-          muzzleY,
-          "hamas_bullet_realistic"
-        );
-        bullet.setDepth(20);
-        this.hamasBullets.push(bullet);
-        this.playAk47FireSound(this.hamasFighter.x, this.hamasFighter.y);
+          const bullet = this.add.image(
+            muzzleX,
+            muzzleY,
+            "hamas_bullet_realistic"
+          );
+          bullet.setDepth(20);
+          this.hamasBullets.push(bullet);
+          this.playAk47FireSound(this.hamasFighter.x, this.hamasFighter.y);
+        }
       }
     } else {
       this.inFiringRange = false;
@@ -580,16 +633,13 @@ export default class GameScene extends Phaser.Scene {
 
     const aheadBase = Math.max(this.player.x + 380, this.cameras.main.worldView.right + 120);
     const spawnX = this.pickClearGroundSpawnX(aheadBase);
-    this.enemyVariant = Phaser.Math.Between(0, 99) < 35 ? "assault" : "standard";
+    this.enemyVariant = "grenadier";
 
     const surfaceTopY = this.ground.y - this.ground.displayHeight * 0.5;
     const spawnY = surfaceTopY - this.enemyFootOffsetPx;
-    this.hamasFighter = new HamasFighter(this, spawnX, spawnY, "idle");
-    if (this.enemyVariant === "assault") {
-      this.hamasFighter.setTint(0xffcfbf);
-    } else {
-      this.hamasFighter.clearTint();
-    }
+    const visualVariant = this.enemyVariant === "grenadier" ? "hamas2" : "hamas1";
+    this.hamasFighter = new HamasFighter(this, spawnX, spawnY, "idle", visualVariant);
+    this.hamasFighter.setTint(0xfff3bf);
     if (this.ground && this.ground.active) {
       this.physics.add.collider(this.hamasFighter, this.ground);
     }
@@ -633,11 +683,107 @@ export default class GameScene extends Phaser.Scene {
   }
 
   private getCurrentFiringRange() {
-    return this.enemyVariant === "assault" ? this.assaultFiringRange : this.standardFiringRange;
+    if (this.enemyVariant === "assault") {
+      return this.assaultFiringRange;
+    }
+    if (this.enemyVariant === "grenadier") {
+      return 560;
+    }
+    return this.standardFiringRange;
   }
 
   private getCurrentShotIntervalMs() {
-    return this.enemyVariant === "assault" ? this.assaultShotIntervalMs : this.standardShotIntervalMs;
+    if (this.enemyVariant === "assault") {
+      return this.assaultShotIntervalMs;
+    }
+    if (this.enemyVariant === "grenadier") {
+      return this.grenadeThrowIntervalMs;
+    }
+    return this.standardShotIntervalMs;
+  }
+
+  private throwEnemyGrenade() {
+    const startX = this.hamasFighter.x + this.bulletSpawnXOffset + 8;
+    const startY = this.hamasFighter.y + this.bulletYOffset - 8;
+
+    const grenade = this.add.circle(startX, startY, 6, 0x55606f, 1);
+    grenade.setDepth(24);
+    grenade.setStrokeStyle(2, 0xc8d2df, 0.9);
+
+    const velocityX = this.grenadeFixedVelocityX;
+    const velocityY = this.grenadeFixedVelocityY;
+
+    this.enemyGrenades.push({
+      body: grenade,
+      velocityX,
+      velocityY,
+      explodeAt: this.time.now + this.grenadeFlightMs,
+    });
+  }
+
+  private updateEnemyGrenades(delta: number) {
+    if (this.enemyGrenades.length === 0) {
+      return;
+    }
+
+    const deltaSec = delta / 1000;
+    const groundTopY = this.ground.y - this.ground.displayHeight * 0.5;
+
+    for (let i = this.enemyGrenades.length - 1; i >= 0; i--) {
+      const grenade = this.enemyGrenades[i];
+
+      grenade.velocityY += this.grenadeGravity * deltaSec;
+      grenade.body.x += grenade.velocityX * deltaSec;
+      grenade.body.y += grenade.velocityY * deltaSec;
+
+      const shouldExplode =
+        this.time.now >= grenade.explodeAt ||
+        grenade.body.y >= groundTopY - 4;
+
+      if (!shouldExplode) {
+        continue;
+      }
+
+      const gx = grenade.body.x;
+      const gy = grenade.body.y;
+      grenade.body.destroy();
+      this.enemyGrenades.splice(i, 1);
+      this.detonateEnemyGrenade(gx, gy);
+    }
+  }
+
+  private detonateEnemyGrenade(x: number, y: number) {
+    this.playClaymoreBoomSound(x, y);
+
+    const flash = this.add.circle(x, y, 18, 0xffe59a, 0.85);
+    flash.setDepth(30);
+    const shockwave = this.add.circle(x, y, 20, 0xffb86a, 0.5);
+    shockwave.setDepth(29);
+    shockwave.setStrokeStyle(3, 0xffd18a, 0.68);
+
+    this.tweens.add({
+      targets: flash,
+      radius: this.grenadeExplosionRadius * 0.45,
+      alpha: 0,
+      duration: 220,
+      onComplete: () => flash.destroy(),
+    });
+
+    this.tweens.add({
+      targets: shockwave,
+      radius: this.grenadeExplosionRadius,
+      alpha: 0,
+      duration: 300,
+      onComplete: () => shockwave.destroy(),
+    });
+
+    if (!this.playerIsDead) {
+      const playerBounds = this.player.getCombatHitBounds();
+      const distance = Phaser.Math.Distance.Between(x, y, playerBounds.centerX, playerBounds.centerY);
+      if (distance <= this.grenadeExplosionRadius) {
+        this.handlePlayerHit();
+      }
+    }
   }
 
   private createPlatforms() {
