@@ -1,0 +1,28 @@
+{
+  "name": "warzone2026",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "sprites:soldier-duck": "node scripts/processSoldierDuck.mjs",
+    "sprites:soldier-dying": "node scripts/processSoldierDying.mjs",
+    "sprites:soldier-combined": "node scripts/integrateJumpRow.mjs",
+    "sprites:soldier-all": "npm run sprites:soldier-duck && npm run sprites:soldier-dying && npm run sprites:soldier-combined",
+    "sprites:hamas-core": "node scripts/processHamasSprites.mjs",
+    "sprites:hamas-dying": "node scripts/processHamasDying.mjs",
+    "sprites:hamas-all": "npm run sprites:hamas-core && npm run sprites:hamas-dying",
+    "sprites:all": "npm run sprites:soldier-all && npm run sprites:hamas-all"
+  },
+  "devDependencies": {
+    "pngjs": "^7.0.0",
+    "sharp": "^0.34.5",
+    "typescript": "~5.9.3",
+    "vite": "^7.3.1"
+  },
+  "dependencies": {
+    "phaser": "^3.90.0"
+  }
+}
