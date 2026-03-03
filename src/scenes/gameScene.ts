@@ -40,6 +40,10 @@ type ActiveEnemyGrenade = {
   velocityX: number;
   velocityY: number;
   explodeAt: number;
+  nextTrailAt: number;
+  warningAt: number;
+  warningShown: boolean;
+  warningRing: Phaser.GameObjects.Arc | null;
 };
 
 export default class GameScene extends Phaser.Scene {
@@ -99,11 +103,13 @@ export default class GameScene extends Phaser.Scene {
   private readonly bombExplosionRadius = 170;
   private readonly bombSpawnAheadMin = 150;
   private readonly bombSpawnAheadMax = 520;
-  private readonly grenadeExplosionRadius = 170;
+  private readonly grenadeExplosionRadius = 120;
   private readonly grenadeGravity = 620;
-  private readonly grenadeFlightMs = 950;
-  private readonly grenadeFixedVelocityX = -500;
-  private readonly grenadeFixedVelocityY = -285;
+  private readonly grenadeFlightMs = 820;
+  private readonly grenadeFixedVelocityX = -250;
+  private readonly grenadeFixedVelocityY = -220;
+  private readonly grenadeSmokeIntervalMs = 36;
+  private readonly grenadeWarningLeadMs = 300;
   private readonly pickupSpawnMinDelayMs = 6500;
   private readonly pickupSpawnMaxDelayMs = 12500;
   private readonly pickupSpawnAheadMin = 120;
@@ -237,7 +243,7 @@ export default class GameScene extends Phaser.Scene {
 
   create() {
     this.hamasIsDead = false;
-    this.enemyVariant = "grenadier";
+    this.enemyVariant = "standard";
     this.playerIsDead = false;
     this.playerDeathTime = 0;
     this.lastShotTime = 0;
@@ -633,7 +639,7 @@ export default class GameScene extends Phaser.Scene {
 
     const aheadBase = Math.max(this.player.x + 380, this.cameras.main.worldView.right + 120);
     const spawnX = this.pickClearGroundSpawnX(aheadBase);
-    this.enemyVariant = "grenadier";
+    this.enemyVariant = Phaser.Math.Between(0, 1) === 0 ? "standard" : "grenadier";
 
     const surfaceTopY = this.ground.y - this.ground.displayHeight * 0.5;
     const spawnY = surfaceTopY - this.enemyFootOffsetPx;
@@ -687,7 +693,7 @@ export default class GameScene extends Phaser.Scene {
       return this.assaultFiringRange;
     }
     if (this.enemyVariant === "grenadier") {
-      return 560;
+      return 470;
     }
     return this.standardFiringRange;
   }
@@ -706,9 +712,9 @@ export default class GameScene extends Phaser.Scene {
     const startX = this.hamasFighter.x + this.bulletSpawnXOffset + 8;
     const startY = this.hamasFighter.y + this.bulletYOffset - 8;
 
-    const grenade = this.add.circle(startX, startY, 6, 0x55606f, 1);
+    const grenade = this.add.circle(startX, startY, 6, 0x8f1f1f, 1);
     grenade.setDepth(24);
-    grenade.setStrokeStyle(2, 0xc8d2df, 0.9);
+    grenade.setStrokeStyle(2, 0xff8a8a, 0.95);
 
     const velocityX = this.grenadeFixedVelocityX;
     const velocityY = this.grenadeFixedVelocityY;
@@ -718,6 +724,49 @@ export default class GameScene extends Phaser.Scene {
       velocityX,
       velocityY,
       explodeAt: this.time.now + this.grenadeFlightMs,
+      nextTrailAt: this.time.now,
+      warningAt: this.time.now + Math.max(0, this.grenadeFlightMs - this.grenadeWarningLeadMs),
+      warningShown: false,
+      warningRing: null,
+    });
+  }
+
+  private showGrenadeWarningRing(x: number, y: number) {
+    const ring = this.add.circle(x, y, this.grenadeExplosionRadius, 0xff4d4d, 0.08);
+    ring.setDepth(19);
+    ring.setStrokeStyle(3, 0xff6b6b, 0.9);
+
+    this.tweens.add({
+      targets: ring,
+      alpha: 0.22,
+      duration: 120,
+      yoyo: true,
+      repeat: 1,
+      ease: "Sine.InOut",
+    });
+
+    return ring;
+  }
+
+  private emitGrenadeSmokePuff(x: number, y: number) {
+    const puff = this.add.circle(
+      x + Phaser.Math.Between(-2, 2),
+      y + Phaser.Math.Between(-2, 2),
+      Phaser.Math.Between(4, 7),
+      0xc7cfd8,
+      0.52
+    );
+    puff.setDepth(23);
+
+    this.tweens.add({
+      targets: puff,
+      x: puff.x + Phaser.Math.Between(-12, -4),
+      y: puff.y - Phaser.Math.Between(8, 16),
+      radius: puff.radius + Phaser.Math.Between(10, 15),
+      alpha: 0,
+      duration: 480,
+      ease: "Sine.Out",
+      onComplete: () => puff.destroy(),
     });
   }
 
@@ -736,6 +785,18 @@ export default class GameScene extends Phaser.Scene {
       grenade.body.x += grenade.velocityX * deltaSec;
       grenade.body.y += grenade.velocityY * deltaSec;
 
+      if (this.time.now >= grenade.nextTrailAt) {
+        this.emitGrenadeSmokePuff(grenade.body.x, grenade.body.y);
+        grenade.nextTrailAt = this.time.now + this.grenadeSmokeIntervalMs;
+      }
+
+      if (!grenade.warningShown && this.time.now >= grenade.warningAt) {
+        const timeLeftSec = Math.max(0, (grenade.explodeAt - this.time.now) / 1000);
+        const predictedX = grenade.body.x + grenade.velocityX * timeLeftSec;
+        grenade.warningRing = this.showGrenadeWarningRing(predictedX, groundTopY - 2);
+        grenade.warningShown = true;
+      }
+
       const shouldExplode =
         this.time.now >= grenade.explodeAt ||
         grenade.body.y >= groundTopY - 4;
@@ -746,6 +807,7 @@ export default class GameScene extends Phaser.Scene {
 
       const gx = grenade.body.x;
       const gy = grenade.body.y;
+      grenade.warningRing?.destroy();
       grenade.body.destroy();
       this.enemyGrenades.splice(i, 1);
       this.detonateEnemyGrenade(gx, gy);
