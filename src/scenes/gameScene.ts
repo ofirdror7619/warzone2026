@@ -1231,6 +1231,163 @@ export default class GameScene extends Phaser.Scene {
     const moon = this.add.circle(760, 96, 26, 0xe9f2ff, 0.92);
     moon.setDepth(-950);
 
+    const culturalSilhouette = this.add.graphics();
+    culturalSilhouette.setDepth(-918);
+    culturalSilhouette.fillStyle(0x223249, 0.96);
+    culturalSilhouette.lineStyle(1, 0x314865, 0.85);
+
+    const drawMosque = (centerX: number, baseY: number, scale: number) => {
+      const hallWidth = 130 * scale;
+      const hallHeight = 56 * scale;
+      const hallTop = baseY - hallHeight;
+      const archColor = 0x172537;
+      culturalSilhouette.fillRect(centerX - hallWidth * 0.5, hallTop, hallWidth, hallHeight);
+      culturalSilhouette.strokeRect(centerX - hallWidth * 0.5, hallTop, hallWidth, hallHeight);
+
+      const domeRadius = 26 * scale;
+      culturalSilhouette.fillCircle(centerX, hallTop, domeRadius);
+      culturalSilhouette.fillRect(centerX - domeRadius, hallTop, domeRadius * 2, domeRadius);
+
+      const sideDomeRadius = 13 * scale;
+      culturalSilhouette.fillCircle(centerX - hallWidth * 0.27, hallTop + 4 * scale, sideDomeRadius);
+      culturalSilhouette.fillRect(
+        centerX - hallWidth * 0.27 - sideDomeRadius,
+        hallTop + 4 * scale,
+        sideDomeRadius * 2,
+        sideDomeRadius
+      );
+      culturalSilhouette.fillCircle(centerX + hallWidth * 0.27, hallTop + 4 * scale, sideDomeRadius);
+      culturalSilhouette.fillRect(
+        centerX + hallWidth * 0.27 - sideDomeRadius,
+        hallTop + 4 * scale,
+        sideDomeRadius * 2,
+        sideDomeRadius
+      );
+
+      const minaretWidth = 16 * scale;
+      const minaretHeight = 100 * scale;
+      const leftMinaretX = centerX - hallWidth * 0.5 - minaretWidth - 8 * scale;
+      const rightMinaretX = centerX + hallWidth * 0.5 + 8 * scale;
+      const minaretTopY = baseY - minaretHeight;
+
+      culturalSilhouette.fillRect(leftMinaretX, minaretTopY, minaretWidth, minaretHeight);
+      culturalSilhouette.fillRect(rightMinaretX, minaretTopY + 6 * scale, minaretWidth, minaretHeight - 6 * scale);
+      culturalSilhouette.strokeRect(leftMinaretX, minaretTopY, minaretWidth, minaretHeight);
+      culturalSilhouette.strokeRect(rightMinaretX, minaretTopY + 6 * scale, minaretWidth, minaretHeight - 6 * scale);
+
+      const capRadius = 9 * scale;
+      culturalSilhouette.fillCircle(leftMinaretX + minaretWidth * 0.5, minaretTopY, capRadius);
+      culturalSilhouette.fillRect(leftMinaretX + minaretWidth * 0.5 - capRadius, minaretTopY, capRadius * 2, capRadius);
+      culturalSilhouette.fillCircle(rightMinaretX + minaretWidth * 0.5, minaretTopY + 6 * scale, capRadius);
+      culturalSilhouette.fillRect(
+        rightMinaretX + minaretWidth * 0.5 - capRadius,
+        minaretTopY + 6 * scale,
+        capRadius * 2,
+        capRadius
+      );
+
+      const doorW = 22 * scale;
+      const doorH = 22 * scale;
+      const doorBaseY = baseY;
+      const doorCenterY = doorBaseY - doorH * 0.5;
+      culturalSilhouette.fillStyle(archColor, 0.92);
+      culturalSilhouette.fillRect(centerX - doorW * 0.5, doorCenterY, doorW, doorH * 0.54);
+      culturalSilhouette.fillCircle(centerX, doorCenterY, doorW * 0.5);
+
+      const sideArchW = 12 * scale;
+      const sideArchH = 14 * scale;
+      const sideArchOffset = hallWidth * 0.27;
+      const sideArchY = baseY - hallHeight * 0.44;
+
+      culturalSilhouette.fillRect(centerX - sideArchOffset - sideArchW * 0.5, sideArchY, sideArchW, sideArchH * 0.56);
+      culturalSilhouette.fillCircle(centerX - sideArchOffset, sideArchY, sideArchW * 0.5);
+
+      culturalSilhouette.fillRect(centerX + sideArchOffset - sideArchW * 0.5, sideArchY, sideArchW, sideArchH * 0.56);
+      culturalSilhouette.fillCircle(centerX + sideArchOffset, sideArchY, sideArchW * 0.5);
+
+      const minaretWindowW = 5 * scale;
+      const minaretWindowH = 9 * scale;
+      const leftWindowX = leftMinaretX + minaretWidth * 0.5;
+      const rightWindowX = rightMinaretX + minaretWidth * 0.5;
+      const leftWindowY = minaretTopY + minaretHeight * 0.4;
+      const rightWindowY = minaretTopY + (minaretHeight - 6 * scale) * 0.44;
+
+      culturalSilhouette.fillRect(leftWindowX - minaretWindowW * 0.5, leftWindowY, minaretWindowW, minaretWindowH * 0.62);
+      culturalSilhouette.fillCircle(leftWindowX, leftWindowY, minaretWindowW * 0.5);
+
+      culturalSilhouette.fillRect(rightWindowX - minaretWindowW * 0.5, rightWindowY, minaretWindowW, minaretWindowH * 0.62);
+      culturalSilhouette.fillCircle(rightWindowX, rightWindowY, minaretWindowW * 0.5);
+
+      const crescentColor = 0xe6f2ff;
+      const leftCapCenterX = leftMinaretX + minaretWidth * 0.5;
+      const leftCapCenterY = minaretTopY - capRadius;
+      const rightCapCenterX = rightMinaretX + minaretWidth * 0.5;
+      const rightCapCenterY = minaretTopY + 6 * scale - capRadius;
+      const crescentR = 5.8 * scale;
+
+      culturalSilhouette.fillStyle(crescentColor, 0.98);
+      culturalSilhouette.fillCircle(leftCapCenterX, leftCapCenterY - 6 * scale, crescentR);
+      culturalSilhouette.fillStyle(0x223249, 1);
+      culturalSilhouette.fillCircle(leftCapCenterX + 1.9 * scale, leftCapCenterY - 6 * scale, crescentR * 0.82);
+
+      culturalSilhouette.fillStyle(crescentColor, 0.98);
+      culturalSilhouette.fillCircle(rightCapCenterX, rightCapCenterY - 6 * scale, crescentR);
+      culturalSilhouette.fillStyle(0x223249, 1);
+      culturalSilhouette.fillCircle(rightCapCenterX + 1.9 * scale, rightCapCenterY - 6 * scale, crescentR * 0.82);
+
+      culturalSilhouette.fillStyle(0x223249, 0.96);
+    };
+
+    const drawStandaloneMinaret = (x: number, baseY: number, scale: number) => {
+      const shaftW = 14 * scale;
+      const shaftH = 120 * scale;
+      const topY = baseY - shaftH;
+
+      culturalSilhouette.fillStyle(0x1f3046, 0.95);
+      culturalSilhouette.fillRect(x - shaftW * 0.5, topY, shaftW, shaftH);
+      culturalSilhouette.strokeRect(x - shaftW * 0.5, topY, shaftW, shaftH);
+
+      const balconyW = 22 * scale;
+      const balconyH = 5 * scale;
+      culturalSilhouette.fillStyle(0x2b4260, 0.92);
+      culturalSilhouette.fillRect(x - balconyW * 0.5, topY + shaftH * 0.32, balconyW, balconyH);
+
+      const capR = 8 * scale;
+      culturalSilhouette.fillStyle(0x223249, 0.96);
+      culturalSilhouette.fillCircle(x, topY, capR);
+      culturalSilhouette.fillRect(x - capR, topY, capR * 2, capR);
+
+      const crescentR = 5.3 * scale;
+      const crescentY = topY - capR - 6 * scale;
+      culturalSilhouette.fillStyle(0xe6f2ff, 0.98);
+      culturalSilhouette.fillCircle(x, crescentY, crescentR);
+      culturalSilhouette.fillStyle(0x223249, 1);
+      culturalSilhouette.fillCircle(x + 2.1 * scale, crescentY, crescentR * 0.82);
+
+      culturalSilhouette.fillStyle(0x172537, 0.88);
+      const slitW = 4 * scale;
+      const slitH = 10 * scale;
+      culturalSilhouette.fillRect(x - slitW * 0.5, topY + shaftH * 0.52, slitW, slitH * 0.6);
+      culturalSilhouette.fillCircle(x, topY + shaftH * 0.52, slitW * 0.5);
+
+      culturalSilhouette.fillStyle(0x223249, 0.96);
+    };
+
+    drawMosque(460, height - 94, 1.36);
+    drawMosque(520, height - 92, 1.12);
+    drawMosque(1740, height - 88, 0.98);
+    drawMosque(3360, height - 92, 1.24);
+    drawMosque(5480, height - 89, 1.05);
+    drawMosque(7720, height - 90, 1.02);
+    drawMosque(10120, height - 94, 1.18);
+
+    drawStandaloneMinaret(1180, height - 90, 0.94);
+    drawStandaloneMinaret(2860, height - 86, 0.88);
+    drawStandaloneMinaret(4300, height - 91, 1.02);
+    drawStandaloneMinaret(6480, height - 88, 0.91);
+    drawStandaloneMinaret(8460, height - 92, 1.04);
+    drawStandaloneMinaret(10940, height - 90, 0.96);
+
     const skylineFar = this.add.graphics();
     skylineFar.setDepth(-930);
     skylineFar.fillStyle(0x101a2a, 1);
@@ -1261,9 +1418,47 @@ export default class GameScene extends Phaser.Scene {
       xFar += blockWidth + Phaser.Math.Between(2, 10);
     }
 
+    const arabicSigns = this.add.graphics();
+    arabicSigns.setDepth(-919);
+
+    const drawPseudoArabicSign = (
+      signsLayer: Phaser.GameObjects.Graphics,
+      leftX: number,
+      topY: number,
+      blockWidth: number,
+      blockHeight: number,
+      glyphAlphaBase: number
+    ) => {
+      const signW = Math.min(blockWidth - 10, Phaser.Math.Between(28, 44));
+      const signH = Phaser.Math.Between(10, 14);
+      const signX = leftX + Phaser.Math.Between(4, Math.max(4, Math.floor(blockWidth - signW - 4)));
+      const signY = topY + Phaser.Math.Between(12, Math.max(12, Math.floor(blockHeight * 0.55)));
+
+      const glyphAlpha = glyphAlphaBase;
+      const glyphColor = 0x000000;
+      const baselineY = signY + signH * 0.62;
+      const glyphStartX = signX + 3;
+      const glyphSpan = signW - 6;
+      const seg1 = Math.floor(glyphSpan * 0.34);
+      const seg2 = Math.floor(glyphSpan * 0.28);
+      const seg3 = Math.floor(glyphSpan * 0.24);
+
+      signsLayer.fillStyle(glyphColor, glyphAlpha);
+      signsLayer.fillRect(glyphStartX, baselineY - 1, seg1, 2.2);
+      signsLayer.fillRect(glyphStartX + seg1 + 2, baselineY + 0.4, seg2, 2.2);
+      signsLayer.fillRect(glyphStartX + seg1 + seg2 + 4, baselineY - 0.2, seg3, 2.2);
+
+      signsLayer.fillRect(glyphStartX + seg1 - 1, baselineY - 4, 2, 4.8);
+      signsLayer.fillRect(glyphStartX + seg1 + seg2 + 3, baselineY - 3, 2, 3.8);
+
+      signsLayer.fillCircle(glyphStartX + Math.max(3, Math.floor(seg1 * 0.35)), baselineY + 3.6, 1.15);
+      signsLayer.fillCircle(glyphStartX + seg1 + 3 + Math.max(3, Math.floor(seg2 * 0.35)), baselineY - 3.1, 1.05);
+    };
+
     const skylineNear = this.add.graphics();
     skylineNear.setDepth(-920);
     skylineNear.fillStyle(0x162338, 1);
+    let ensuredArabicSignsAtStart = 0;
     let xNear = -10;
     while (xNear < width + 20) {
       const blockWidth = Phaser.Math.Between(44, 96);
@@ -1287,6 +1482,20 @@ export default class GameScene extends Phaser.Scene {
           }
         }
       }
+
+      const inStartZone = xNear <= 1600;
+      const forceVisibleStartSigns = inStartZone && ensuredArabicSignsAtStart < 4;
+      const shouldDrawArabicSign =
+        blockWidth >= 52 &&
+        (forceVisibleStartSigns || Math.random() < (inStartZone ? 0.58 : 0.4));
+
+      if (shouldDrawArabicSign) {
+        drawPseudoArabicSign(arabicSigns, xNear, topY, blockWidth, blockHeight, Phaser.Math.FloatBetween(0.9, 1));
+        if (forceVisibleStartSigns) {
+          ensuredArabicSignsAtStart += 1;
+        }
+      }
+
       xNear += blockWidth + Phaser.Math.Between(0, 8);
     }
 
@@ -1294,6 +1503,17 @@ export default class GameScene extends Phaser.Scene {
     horizonGlow.setDepth(-910);
     horizonGlow.fillGradientStyle(0x1f3350, 0x1f3350, 0x0f1a2d, 0x0f1a2d, 0.55);
     horizonGlow.fillRect(0, height - 150, width, 150);
+
+    const geometricBand = this.add.graphics();
+    geometricBand.setDepth(-909);
+    const bandY = height - 124;
+    geometricBand.fillStyle(0x243349, 0.34);
+    geometricBand.fillRect(0, bandY, width, 10);
+    geometricBand.fillStyle(0x2d4059, 0.32);
+    for (let x = -12; x < width + 20; x += 24) {
+      geometricBand.fillTriangle(x, bandY + 10, x + 12, bandY + 1, x + 24, bandY + 10);
+      geometricBand.fillTriangle(x + 6, bandY, x + 12, bandY + 9, x + 18, bandY);
+    }
 
     const roadTop = height - 88;
     const roadHeight = 88;
@@ -1440,6 +1660,15 @@ export default class GameScene extends Phaser.Scene {
     roadShade.setDepth(-891);
     roadShade.fillGradientStyle(0x000000, 0x000000, 0x000000, 0x000000, 0.2);
     roadShade.fillRect(0, roadTop, width, roadHeight);
+
+    const foregroundMotif = this.add.graphics();
+    foregroundMotif.setDepth(-890);
+    foregroundMotif.fillStyle(0x3f4f60, 0.36);
+    const motifY = roadTop + 4;
+    for (let x = -30; x < width + 36; x += 36) {
+      foregroundMotif.fillTriangle(x, motifY + 9, x + 18, motifY, x + 36, motifY + 9);
+      foregroundMotif.fillTriangle(x + 9, motifY + 9, x + 18, motifY + 2, x + 27, motifY + 9);
+    }
   }
 
   private createWindowFlicker(
