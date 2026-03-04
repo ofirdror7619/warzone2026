@@ -160,7 +160,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.isDuckingState = false;
 
     if (Phaser.Input.Keyboard.JustDown(this.cursors.up) && body.blocked.down) {
-      body.setVelocityY(-360);
+      body.setVelocityY(-390);
     }
 
     const pressingIntoLeftWall = this.cursors.left?.isDown && body.blocked.left;

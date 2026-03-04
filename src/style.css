@@ -73,7 +73,8 @@ body {
 }
 
 #hud-lives,
-#hud-kills {
+#hud-kills,
+#hud-mute {
   padding: 6px 10px;
   border-radius: 999px;
   border: 1px solid rgba(149, 201, 255, 0.42);
@@ -82,6 +83,19 @@ body {
     0 0 0 1px rgba(117, 181, 255, 0.15) inset,
     0 0 14px rgba(40, 122, 255, 0.18);
   line-height: 1;
+}
+
+#hud-mute {
+  font-size: 17px;
+  color: #bde8ff;
+}
+
+#hud-mute.is-muted {
+  color: #fecaca;
+  border-color: rgba(248, 113, 113, 0.48);
+  box-shadow:
+    0 0 0 1px rgba(248, 113, 113, 0.18) inset,
+    0 0 14px rgba(220, 38, 38, 0.24);
 }
 
 #hud-status {
@@ -97,19 +111,19 @@ body {
 .hud-volume {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 4px 8px;
+  gap: 6px;
+  padding: 3px 7px;
   border-radius: 10px;
   background: rgba(9, 20, 34, 0.58);
   border: 1px solid rgba(128, 175, 240, 0.28);
-  font-size: 15px;
+  font-size: 14px;
   color: #d5e6ff;
   white-space: nowrap;
 }
 
 #hud-vol-sfx,
 #hud-vol-music {
-  width: 136px;
+  width: 98px;
   accent-color: #69c1ff;
 }
 

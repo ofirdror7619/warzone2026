@@ -94,6 +94,7 @@ export default class GameScene extends Phaser.Scene {
   private platformEarlyBlockDistance = 30;
   private platformSideBlockWidth = 18;
   private platformSideBlockHeight = 170;
+  private readonly platformRightSupportInsetPx = 18;
   private readonly targetKills = 35;
   private readonly respawnDelayMs = 900;
   private readonly enemyFootOffsetPx = 60;
@@ -110,6 +111,9 @@ export default class GameScene extends Phaser.Scene {
   private readonly grenadeFixedVelocityY = -220;
   private readonly grenadeSmokeIntervalMs = 36;
   private readonly grenadeWarningLeadMs = 300;
+  private readonly respawnInvulnerabilityMs = 900;
+  private readonly shieldBreakSlowmoMs = 400;
+  private readonly shieldBreakSlowmoScale = 0.5;
   private readonly pickupSpawnMinDelayMs = 6500;
   private readonly pickupSpawnMaxDelayMs = 12500;
   private readonly pickupSpawnAheadMin = 120;
@@ -131,6 +135,7 @@ export default class GameScene extends Phaser.Scene {
   private missionState: "running" | "won" | "lost" = "running";
   private hudLivesEl: HTMLElement | null = null;
   private hudKillsEl: HTMLElement | null = null;
+  private hudMuteEl: HTMLElement | null = null;
   private hudStatusEl: HTMLElement | null = null;
   private missionOverlayText: Phaser.GameObjects.Text | null = null;
   private powerupOverlayText: Phaser.GameObjects.Text | null = null;
@@ -146,6 +151,17 @@ export default class GameScene extends Phaser.Scene {
   private nextPickupSpawnAt = 0;
   private armorShieldCharges = 0;
   private ammoBurstActiveUntil = 0;
+  private quickMuteEnabled = false;
+  private preMuteMasterSoundVolume = 0.78;
+  private preMuteMusicVolume = 0.45;
+  private respawnInvulnerableUntil = 0;
+  private respawnBlinkTween: Phaser.Tweens.Tween | null = null;
+  private lowHealthPulseOverlay: Phaser.GameObjects.Graphics | null = null;
+  private lowHealthHeartbeatEvent: Phaser.Time.TimerEvent | null = null;
+  private lowHealthPulseTween: Phaser.Tweens.Tween | null = null;
+  private isLowHealthPulseActive = false;
+  private combatTimeScale = 1;
+  private shieldBreakSlowmoTween: Phaser.Tweens.Tween | null = null;
   private levelMusic: Phaser.Sound.BaseSound | null = null;
 
   constructor() {
@@ -270,11 +286,20 @@ export default class GameScene extends Phaser.Scene {
     this.nextPickupSpawnAt = 0;
     this.armorShieldCharges = 0;
     this.ammoBurstActiveUntil = 0;
+    this.respawnInvulnerableUntil = 0;
+    this.respawnBlinkTween?.stop();
+    this.respawnBlinkTween = null;
+    this.stopLowHealthPulse();
+    this.combatTimeScale = 1;
+    this.applyCombatTimeScale();
     this.loadCollisionConfig();
     this.loadCombatConfig();
 
     this.input.keyboard?.on("keydown-R", () => {
       this.scene.restart({ level: this.currentLevel });
+    });
+    this.input.keyboard?.on("keydown-M", () => {
+      this.toggleQuickMute();
     });
 
     this.physics.world.setBounds(0, 0, this.worldWidth, this.scale.height);
@@ -307,11 +332,14 @@ export default class GameScene extends Phaser.Scene {
 
     this.hudLivesEl = document.getElementById("hud-lives");
     this.hudKillsEl = document.getElementById("hud-kills");
+    this.hudMuteEl = document.getElementById("hud-mute");
     this.hudStatusEl = document.getElementById("hud-status");
     if (this.hudStatusEl) {
       this.hudStatusEl.textContent = "";
     }
     this.bindVolumeControls();
+    this.syncVolumeInputsForMute();
+    this.updateMuteHud();
     this.playLevelMusic();
 
     this.refreshHud();
@@ -365,6 +393,10 @@ export default class GameScene extends Phaser.Scene {
   update(_time: number, delta: number) {
     this.player.update();
     this.hamasFighter.update();
+    this.updateRespawnInvulnerability();
+    this.updateLowHealthPulseState();
+
+    const scaledDelta = delta * this.combatTimeScale;
 
     if (this.introCountdownActive) {
       this.hamasFighter.setAnimationState("idle");
@@ -373,7 +405,7 @@ export default class GameScene extends Phaser.Scene {
     }
 
     this.updateBombSystem();
-    this.updateEnemyGrenades(delta);
+    this.updateEnemyGrenades(scaledDelta);
     this.updatePickupSystem();
     this.updatePowerupOverlay();
 
@@ -388,7 +420,7 @@ export default class GameScene extends Phaser.Scene {
     );
     for (let i = this.hamasBullets.length - 1; i >= 0; i--) {
       const bullet = this.hamasBullets[i];
-      bullet.x -= (this.bulletSpeed * delta) / 1000;
+      bullet.x -= (this.bulletSpeed * scaledDelta) / 1000;
 
       if (bullet.x < this.physics.world.bounds.left - 40 || bullet.x > this.physics.world.bounds.right + 40) {
         bullet.destroy();
@@ -437,7 +469,7 @@ export default class GameScene extends Phaser.Scene {
     for (let i = this.playerBullets.length - 1; i >= 0; i--) {
       const bullet = this.playerBullets[i];
       const dir = (bullet.getData("dir") as number) ?? 1;
-      bullet.x += (this.playerBulletSpeed * delta * dir) / 1000;
+      bullet.x += (this.playerBulletSpeed * scaledDelta * dir) / 1000;
       const startX = (bullet.getData("startX") as number) ?? bullet.x;
 
       if (Math.abs(bullet.x - startX) > this.playerBulletMaxRangePx) {
@@ -770,6 +802,210 @@ export default class GameScene extends Phaser.Scene {
     });
   }
 
+  private emitShieldBreakEffect(x: number, y: number) {
+    const ring = this.add.circle(x, y, 18, 0x9bd8ff, 0.14);
+    ring.setDepth(33);
+    ring.setStrokeStyle(3, 0xcbe9ff, 0.95);
+
+    this.tweens.add({
+      targets: ring,
+      radius: 62,
+      alpha: 0,
+      duration: 210,
+      ease: "Quad.Out",
+      onComplete: () => ring.destroy(),
+    });
+
+    const shardCount = 10;
+    for (let i = 0; i < shardCount; i++) {
+      const shard = this.add.rectangle(x, y, Phaser.Math.Between(4, 7), 2, 0xd7eeff, 0.95);
+      shard.setDepth(34);
+      const angle = Phaser.Math.FloatBetween(0, Math.PI * 2);
+      const distance = Phaser.Math.Between(20, 46);
+
+      this.tweens.add({
+        targets: shard,
+        x: x + Math.cos(angle) * distance,
+        y: y + Math.sin(angle) * distance,
+        angle: Phaser.Math.Between(-120, 120),
+        alpha: 0,
+        duration: Phaser.Math.Between(150, 240),
+        ease: "Quad.Out",
+        onComplete: () => shard.destroy(),
+      });
+    }
+  }
+
+  private applyCombatTimeScale() {
+    const clampedScale = Phaser.Math.Clamp(this.combatTimeScale, 0.2, 1);
+    this.combatTimeScale = clampedScale;
+    this.physics.world.timeScale = clampedScale;
+    this.anims.globalTimeScale = clampedScale;
+  }
+
+  private triggerShieldBreakSlowmo() {
+    this.shieldBreakSlowmoTween?.stop();
+    this.shieldBreakSlowmoTween = null;
+
+    this.combatTimeScale = this.shieldBreakSlowmoScale;
+    this.applyCombatTimeScale();
+
+    this.shieldBreakSlowmoTween = this.tweens.add({
+      targets: this,
+      combatTimeScale: 1,
+      duration: this.shieldBreakSlowmoMs,
+      ease: "Quad.Out",
+      onUpdate: () => this.applyCombatTimeScale(),
+      onComplete: () => {
+        this.combatTimeScale = 1;
+        this.applyCombatTimeScale();
+        this.shieldBreakSlowmoTween = null;
+      },
+    });
+  }
+
+  private ensureLowHealthPulseOverlay() {
+    if (this.lowHealthPulseOverlay) {
+      return;
+    }
+
+    const width = this.scale.width;
+    const height = this.scale.height;
+    const edgeThickness = 36;
+
+    const overlay = this.add.graphics();
+    overlay.setDepth(320);
+    overlay.setScrollFactor(0);
+    overlay.fillStyle(0x7f0012, 1);
+    overlay.fillRect(0, 0, width, edgeThickness);
+    overlay.fillRect(0, height - edgeThickness, width, edgeThickness);
+    overlay.fillRect(0, edgeThickness, edgeThickness, height - edgeThickness * 2);
+    overlay.fillRect(width - edgeThickness, edgeThickness, edgeThickness, height - edgeThickness * 2);
+    overlay.setAlpha(0);
+    overlay.setVisible(false);
+
+    this.lowHealthPulseOverlay = overlay;
+  }
+
+  private triggerLowHealthHeartbeatPulse() {
+    if (!this.lowHealthPulseOverlay || !this.isLowHealthPulseActive) {
+      return;
+    }
+
+    this.lowHealthPulseTween?.stop();
+    this.lowHealthPulseTween = this.tweens.add({
+      targets: this.lowHealthPulseOverlay,
+      alpha: { from: 0.04, to: 0.2 },
+      duration: 110,
+      ease: "Sine.InOut",
+      yoyo: true,
+      repeat: 1,
+      repeatDelay: 70,
+    });
+
+    this.cameras.main.shake(70, 0.0012, false);
+
+    if (this.hudLivesEl) {
+      this.hudLivesEl.style.transform = "scale(1.06)";
+      this.time.delayedCall(120, () => {
+        if (!this.hudLivesEl || !this.isLowHealthPulseActive) {
+          return;
+        }
+        this.hudLivesEl.style.transform = "scale(1)";
+      });
+    }
+  }
+
+  private startLowHealthPulse() {
+    if (this.isLowHealthPulseActive) {
+      return;
+    }
+
+    this.isLowHealthPulseActive = true;
+    this.ensureLowHealthPulseOverlay();
+    if (this.lowHealthPulseOverlay) {
+      this.lowHealthPulseOverlay.setVisible(true);
+    }
+
+    if (this.hudLivesEl) {
+      this.hudLivesEl.style.transition = "transform 110ms ease, color 110ms ease, text-shadow 110ms ease";
+      this.hudLivesEl.style.color = "#fecaca";
+      this.hudLivesEl.style.textShadow = "0 0 10px rgba(248, 113, 113, 0.9)";
+    }
+
+    this.lowHealthHeartbeatEvent?.remove(false);
+    this.lowHealthHeartbeatEvent = this.time.addEvent({
+      delay: 1050,
+      callback: () => this.triggerLowHealthHeartbeatPulse(),
+      loop: true,
+    });
+
+    this.triggerLowHealthHeartbeatPulse();
+  }
+
+  private stopLowHealthPulse() {
+    this.isLowHealthPulseActive = false;
+    this.lowHealthHeartbeatEvent?.remove(false);
+    this.lowHealthHeartbeatEvent = null;
+
+    this.lowHealthPulseTween?.stop();
+    this.lowHealthPulseTween = null;
+
+    if (this.lowHealthPulseOverlay) {
+      this.lowHealthPulseOverlay.setAlpha(0);
+      this.lowHealthPulseOverlay.setVisible(false);
+    }
+
+    if (this.hudLivesEl) {
+      this.hudLivesEl.style.transform = "scale(1)";
+      this.hudLivesEl.style.color = "";
+      this.hudLivesEl.style.textShadow = "";
+    }
+  }
+
+  private updateLowHealthPulseState() {
+    const shouldPulse = this.missionState === "running" && this.lives === 1 && !this.playerIsDead;
+    if (shouldPulse) {
+      this.startLowHealthPulse();
+      return;
+    }
+    this.stopLowHealthPulse();
+  }
+
+  private updateRespawnInvulnerability() {
+    if (this.respawnInvulnerableUntil <= 0) {
+      return;
+    }
+
+    if (this.time.now < this.respawnInvulnerableUntil) {
+      return;
+    }
+
+    this.respawnInvulnerableUntil = 0;
+    this.respawnBlinkTween?.stop();
+    this.respawnBlinkTween = null;
+    this.player.setAlpha(1);
+  }
+
+  private startRespawnInvulnerability() {
+    this.respawnInvulnerableUntil = this.time.now + this.respawnInvulnerabilityMs;
+
+    this.respawnBlinkTween?.stop();
+    this.respawnBlinkTween = this.tweens.add({
+      targets: this.player,
+      alpha: { from: 1, to: 0.34 },
+      duration: 88,
+      yoyo: true,
+      repeat: 8,
+      ease: "Sine.InOut",
+      onComplete: () => {
+        if (this.time.now >= this.respawnInvulnerableUntil) {
+          this.player.setAlpha(1);
+        }
+      },
+    });
+  }
+
   private updateEnemyGrenades(delta: number) {
     if (this.enemyGrenades.length === 0) {
       return;
@@ -866,6 +1102,11 @@ export default class GameScene extends Phaser.Scene {
       const body = platform.body as Phaser.Physics.Arcade.StaticBody;
       body.setSize(spec.width + this.platformSideBlockExtraWidth, 20);
       body.updateFromGameObject();
+      body.setSize(
+        Math.max(36, spec.width + this.platformSideBlockExtraWidth - this.platformRightSupportInsetPx),
+        20,
+        false
+      );
 
       const edge = this.add.rectangle(spec.x, spec.y - 10, spec.width, 2, 0xcac6ba, 0.9);
       edge.setDepth(6);
@@ -874,11 +1115,11 @@ export default class GameScene extends Phaser.Scene {
       shade.setDepth(6);
 
       const halfWidth = spec.width * 0.5;
-      const blockerCenterY = spec.y - 10 + this.platformSideBlockHeight * 0.5;
+      const leftBlockerCenterY = spec.y - 10 + this.platformSideBlockHeight * 0.5;
 
       const leftBlocker = this.add.rectangle(
         spec.x - halfWidth - this.platformEarlyBlockDistance,
-        blockerCenterY,
+        leftBlockerCenterY,
         this.platformSideBlockWidth,
         this.platformSideBlockHeight,
         0xff0000,
@@ -887,19 +1128,8 @@ export default class GameScene extends Phaser.Scene {
       leftBlocker.setVisible(false);
       this.physics.add.existing(leftBlocker, true);
 
-      const rightBlocker = this.add.rectangle(
-        spec.x + halfWidth + this.platformEarlyBlockDistance,
-        blockerCenterY,
-        this.platformSideBlockWidth,
-        this.platformSideBlockHeight,
-        0xff0000,
-        0
-      );
-      rightBlocker.setVisible(false);
-      this.physics.add.existing(rightBlocker, true);
-
       this.platforms.push(platform);
-      this.platformSideBlockers.push(leftBlocker, rightBlocker);
+      this.platformSideBlockers.push(leftBlocker);
     }
   }
 
@@ -1581,11 +1811,14 @@ export default class GameScene extends Phaser.Scene {
       const clampedSfx = Phaser.Math.Clamp(this.masterSoundVolume, 0, 1);
       sfxInput.value = clampedSfx.toFixed(2);
       this.masterSoundVolume = clampedSfx;
+      this.preMuteMasterSoundVolume = clampedSfx;
 
       sfxInput.oninput = () => {
         const parsed = Number(sfxInput.value);
         if (!Number.isFinite(parsed)) return;
-        this.masterSoundVolume = Phaser.Math.Clamp(parsed, 0, 1);
+        const clamped = Phaser.Math.Clamp(parsed, 0, 1);
+        this.masterSoundVolume = clamped;
+        this.preMuteMasterSoundVolume = clamped;
       };
     }
 
@@ -1594,14 +1827,63 @@ export default class GameScene extends Phaser.Scene {
       const clampedMusic = Phaser.Math.Clamp(this.musicVolume, 0, 1);
       musicInput.value = clampedMusic.toFixed(2);
       this.musicVolume = clampedMusic;
+      this.preMuteMusicVolume = clampedMusic;
 
       musicInput.oninput = () => {
         const parsed = Number(musicInput.value);
         if (!Number.isFinite(parsed)) return;
-        this.musicVolume = Phaser.Math.Clamp(parsed, 0, 1);
+        const clamped = Phaser.Math.Clamp(parsed, 0, 1);
+        this.musicVolume = clamped;
+        this.preMuteMusicVolume = clamped;
         this.applyLevelMusicVolume();
       };
     }
+  }
+
+  private syncVolumeInputsForMute() {
+    const sfxInput = document.getElementById("hud-vol-sfx") as HTMLInputElement | null;
+    if (sfxInput) {
+      sfxInput.value = (this.quickMuteEnabled ? 0 : this.masterSoundVolume).toFixed(2);
+      sfxInput.disabled = this.quickMuteEnabled;
+    }
+
+    const musicInput = document.getElementById("hud-vol-music") as HTMLInputElement | null;
+    if (musicInput) {
+      musicInput.value = (this.quickMuteEnabled ? 0 : this.musicVolume).toFixed(2);
+      musicInput.disabled = this.quickMuteEnabled;
+    }
+  }
+
+  private updateMuteHud() {
+    if (!this.hudMuteEl) {
+      return;
+    }
+
+    this.hudMuteEl.textContent = this.quickMuteEnabled ? "Audio: OFF (M)" : "Audio: ON (M)";
+    this.hudMuteEl.classList.toggle("is-muted", this.quickMuteEnabled);
+  }
+
+  private toggleQuickMute() {
+    this.quickMuteEnabled = !this.quickMuteEnabled;
+
+    if (this.quickMuteEnabled) {
+      this.preMuteMasterSoundVolume = Phaser.Math.Clamp(this.masterSoundVolume, 0, 1);
+      this.preMuteMusicVolume = Phaser.Math.Clamp(this.musicVolume, 0, 1);
+      this.masterSoundVolume = 0;
+      this.musicVolume = 0;
+      this.applyLevelMusicVolume();
+      this.syncVolumeInputsForMute();
+      this.updateMuteHud();
+      this.showPowerupStatus("Audio muted", "#fca5a5", 800);
+      return;
+    }
+
+    this.masterSoundVolume = Phaser.Math.Clamp(this.preMuteMasterSoundVolume, 0, 1);
+    this.musicVolume = Phaser.Math.Clamp(this.preMuteMusicVolume, 0, 1);
+    this.applyLevelMusicVolume();
+    this.syncVolumeInputsForMute();
+    this.updateMuteHud();
+    this.showPowerupStatus("Audio unmuted", "#86efac", 800);
   }
 
   private applyLevelMusicVolume() {
@@ -2292,16 +2574,26 @@ export default class GameScene extends Phaser.Scene {
     if (this.hudKillsEl) {
       this.hudKillsEl.textContent = `Vipers Eliminated: ${this.kills}/${this.targetKills}`;
     }
+    this.updateLowHealthPulseState();
   }
 
   private handlePlayerHit() {
     if (this.playerIsDead) return;
+    if (this.time.now < this.respawnInvulnerableUntil) return;
 
     if (this.armorShieldCharges > 0) {
       this.armorShieldCharges -= 1;
+      const hitBounds = this.player.getCombatHitBounds();
+      this.emitShieldBreakEffect(hitBounds.centerX, hitBounds.centerY);
+      this.triggerShieldBreakSlowmo();
       this.showPowerupStatus("Shield absorbed the hit", "#93c5fd", 1200);
       return;
     }
+
+    this.respawnInvulnerableUntil = 0;
+    this.respawnBlinkTween?.stop();
+    this.respawnBlinkTween = null;
+    this.player.setAlpha(1);
 
     this.playPlayerDeathSound();
     this.player.die();
@@ -2320,6 +2612,7 @@ export default class GameScene extends Phaser.Scene {
     this.player.respawnAt(leftX, 480);
     this.playerIsDead = false;
     this.playerDeathTime = 0;
+    this.startRespawnInvulnerability();
   }
 
   private getConfiguredLives() {
@@ -2336,6 +2629,7 @@ export default class GameScene extends Phaser.Scene {
 
   private winMission() {
     this.missionState = "won";
+    this.stopLowHealthPulse();
     this.stopLevelMusic();
     this.clearActivePickup();
     const finalLevel = this.currentLevel >= this.maxLevels;
@@ -2358,6 +2652,7 @@ export default class GameScene extends Phaser.Scene {
 
   private failMission(label: string) {
     this.missionState = "lost";
+    this.stopLowHealthPulse();
     this.stopLevelMusic();
     this.clearActivePickup();
     if (this.missionOverlayText) {
