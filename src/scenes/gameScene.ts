@@ -94,7 +94,7 @@ export default class GameScene extends Phaser.Scene {
   private platformEarlyBlockDistance = 30;
   private platformSideBlockWidth = 18;
   private platformSideBlockHeight = 170;
-  private readonly targetKills = 100;
+  private readonly targetKills = 35;
   private readonly respawnDelayMs = 900;
   private readonly enemyFootOffsetPx = 60;
   private readonly bombSpawnMinDelayMs = 4500;
