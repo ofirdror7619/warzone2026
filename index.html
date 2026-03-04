@@ -9,11 +9,12 @@
   <body>
     <div id="game-shell">
       <h1 id="game-title">Warzone 2026: Purging The Viper's Nest</h1>
+      <div id="hud-audio-icon" title="Audio: ON (M)" aria-label="Audio on">🔊</div>
       <div id="app"></div>
       <div id="hud" aria-live="polite">
         <div id="hud-lives">Lives: 3</div>
         <div id="hud-kills">Vipers Eliminated: 0/35</div>
-        <div id="hud-mute">Audio: ON (M)</div>
+        <div id="hud-airstrikes">Airstrikes: 1</div>
         <div id="hud-status"></div>
         <label class="hud-volume" for="hud-vol-sfx">
           SFX
@@ -24,7 +25,7 @@
           <input id="hud-vol-music" type="range" min="0" max="1" step="0.01" value="0.45" />
         </label>
       </div>
-      <div id="hud-hint">R - Restart • M - Mute</div>
+      <div id="hud-hint">R - Restart • M - Mute • A - Airstrike</div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

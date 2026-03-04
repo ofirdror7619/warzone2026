@@ -13,6 +13,7 @@
     "sprites:soldier-all": "npm run sprites:soldier-duck && npm run sprites:soldier-dying && npm run sprites:soldier-combined",
     "sprites:hamas-core": "node scripts/processHamasSprites.mjs",
     "sprites:hamas-dying": "node scripts/processHamasDying.mjs",
+    "sprites:jet": "node scripts/processJetSprite.mjs",
     "sprites:hamas-all": "npm run sprites:hamas-core && npm run sprites:hamas-dying",
     "sprites:all": "npm run sprites:soldier-all && npm run sprites:hamas-all"
   },

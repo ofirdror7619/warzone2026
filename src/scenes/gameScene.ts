@@ -12,6 +12,7 @@ import hamasDyingSprite from "../assets/hamas-1-sprites/hamas_dying_transparent.
 import hamas2IdleSprite from "../assets/hamas-2-sprites/hamas2_idle_transparent.png";
 import hamas2ThrowSprite from "../assets/hamas-2-sprites/hamas2_throw_transparent.png";
 import hamas2DyingSprite from "../assets/hamas-2-sprites/hamas2_dying_transparent.png";
+import jetSprite from "../assets/airstrike-sprites/jet_transparent.png";
 
 type ActiveBomb = {
   x: number;
@@ -25,7 +26,7 @@ type ActiveBomb = {
   spark: Phaser.GameObjects.Arc;
 };
 
-type PickupType = "medkit" | "armor" | "ammo";
+type PickupType = "medkit" | "armor" | "ammo" | "airstrike";
 
 type ActivePickup = {
   type: PickupType;
@@ -135,7 +136,8 @@ export default class GameScene extends Phaser.Scene {
   private missionState: "running" | "won" | "lost" = "running";
   private hudLivesEl: HTMLElement | null = null;
   private hudKillsEl: HTMLElement | null = null;
-  private hudMuteEl: HTMLElement | null = null;
+  private hudAirstrikesEl: HTMLElement | null = null;
+  private hudAudioIconEl: HTMLElement | null = null;
   private hudStatusEl: HTMLElement | null = null;
   private missionOverlayText: Phaser.GameObjects.Text | null = null;
   private powerupOverlayText: Phaser.GameObjects.Text | null = null;
@@ -151,6 +153,8 @@ export default class GameScene extends Phaser.Scene {
   private nextPickupSpawnAt = 0;
   private armorShieldCharges = 0;
   private ammoBurstActiveUntil = 0;
+  private airstrikeCharges = 1;
+  private airstrikeInProgress = false;
   private quickMuteEnabled = false;
   private preMuteMasterSoundVolume = 0.78;
   private preMuteMusicVolume = 0.45;
@@ -239,6 +243,8 @@ export default class GameScene extends Phaser.Scene {
       spacing: 0,
     });
 
+    this.load.image("airstrike_jet", jetSprite);
+
     this.load.audio("level_music_1", new URL("../assets/music/music-for-level-1.mp3", import.meta.url).toString());
   }
 
@@ -286,6 +292,7 @@ export default class GameScene extends Phaser.Scene {
     this.nextPickupSpawnAt = 0;
     this.armorShieldCharges = 0;
     this.ammoBurstActiveUntil = 0;
+    this.airstrikeCharges = 1;
     this.respawnInvulnerableUntil = 0;
     this.respawnBlinkTween?.stop();
     this.respawnBlinkTween = null;
@@ -300,6 +307,9 @@ export default class GameScene extends Phaser.Scene {
     });
     this.input.keyboard?.on("keydown-M", () => {
       this.toggleQuickMute();
+    });
+    this.input.keyboard?.on("keydown-A", () => {
+      this.tryActivateAirstrike();
     });
 
     this.physics.world.setBounds(0, 0, this.worldWidth, this.scale.height);
@@ -332,8 +342,14 @@ export default class GameScene extends Phaser.Scene {
 
     this.hudLivesEl = document.getElementById("hud-lives");
     this.hudKillsEl = document.getElementById("hud-kills");
-    this.hudMuteEl = document.getElementById("hud-mute");
+    this.hudAirstrikesEl = document.getElementById("hud-airstrikes");
+    this.hudAudioIconEl = document.getElementById("hud-audio-icon");
     this.hudStatusEl = document.getElementById("hud-status");
+    if (this.hudAudioIconEl) {
+      this.hudAudioIconEl.onclick = () => {
+        this.toggleQuickMute();
+      };
+    }
     if (this.hudStatusEl) {
       this.hudStatusEl.textContent = "";
     }
@@ -1671,12 +1687,25 @@ export default class GameScene extends Phaser.Scene {
     }
 
     const typeRoll = Phaser.Math.Between(0, 99);
-    const type: PickupType = typeRoll < 34 ? "medkit" : typeRoll < 67 ? "armor" : "ammo";
+    const type: PickupType =
+      typeRoll < 25 ? "medkit" : typeRoll < 50 ? "armor" : typeRoll < 75 ? "ammo" : "airstrike";
 
     const radius = 16;
-    const glowColor = type === "medkit" ? 0xff6b6b : type === "armor" ? 0x62b6ff : 0xffd166;
-    const coreColor = type === "medkit" ? 0xe24a4a : type === "armor" ? 0x3f8ed8 : 0xd49b3a;
-    const labelText = type === "medkit" ? "+" : type === "armor" ? "S" : "A";
+    const glowColor = type === "medkit"
+      ? 0xff6b6b
+      : type === "armor"
+      ? 0x62b6ff
+      : type === "ammo"
+      ? 0xffd166
+      : 0xf3a1ff;
+    const coreColor = type === "medkit"
+      ? 0xe24a4a
+      : type === "armor"
+      ? 0x3f8ed8
+      : type === "ammo"
+      ? 0xd49b3a
+      : 0xa84bcc;
+    const labelText = type === "medkit" ? "+" : type === "armor" ? "S" : type === "ammo" ? "A" : "AS";
 
     const glow = this.add.circle(pos.x, pos.y, radius + 7, glowColor, 0.22);
     glow.setDepth(22);
@@ -1770,6 +1799,13 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
 
+    if (type === "airstrike") {
+      this.airstrikeCharges += 1;
+      this.refreshHud();
+      this.showPowerupStatus("Airstrike collected: +1 charge", "#f5b4ff");
+      return;
+    }
+
     this.ammoBurstActiveUntil = this.time.now + this.ammoBurstDurationMs;
     this.showPowerupStatus("Ammo Burst: 8.0s", "#fbbf24", this.ammoBurstDurationMs);
   }
@@ -1778,6 +1814,222 @@ export default class GameScene extends Phaser.Scene {
     return this.time.now < this.ammoBurstActiveUntil
       ? this.ammoBurstShotIntervalMs
       : this.playerShotIntervalMs;
+  }
+
+  private tryActivateAirstrike() {
+    if (this.missionState !== "running" || this.introCountdownActive || this.playerIsDead) {
+      return;
+    }
+
+    if (this.airstrikeInProgress) {
+      return;
+    }
+
+    if (this.airstrikeCharges <= 0) {
+      this.showPowerupStatus("No Airstrikes available", "#fca5a5", 850);
+      return;
+    }
+
+    this.airstrikeCharges -= 1;
+    this.refreshHud();
+    this.airstrikeInProgress = true;
+    this.showPowerupStatus("Airstrike deployed", "#f5b4ff", 1200);
+
+    const view = this.cameras.main.worldView;
+    const groundTopY = this.ground.y - this.ground.displayHeight * 0.5;
+    const jetY = Math.max(70, view.top + 84);
+    const jetStartX = view.left - 220;
+    const jetEndX = view.right + 240;
+
+    const jet = this.add.image(jetStartX, jetY, "airstrike_jet");
+    jet.setDepth(60);
+    jet.setScale(1.9);
+
+    this.playJetFlybySound(jetStartX, jetEndX, jetY, 980);
+
+    const strikeCount = 7;
+    let appliedDamage = false;
+    for (let i = 0; i < strikeCount; i++) {
+      this.time.delayedCall(150 + i * 110, () => {
+        if (!this.scene.isActive()) return;
+        const t = strikeCount <= 1 ? 0.5 : i / (strikeCount - 1);
+        const x = Phaser.Math.Linear(view.left + 70, view.right - 70, t);
+        const y = groundTopY + Phaser.Math.Between(-5, 5);
+        this.emitAirstrikeBlast(x, y);
+
+        if (!appliedDamage) {
+          appliedDamage = true;
+          this.applyAirstrikeDamageInView();
+        }
+      });
+    }
+
+    this.tweens.add({
+      targets: jet,
+      x: jetEndX,
+      duration: 980,
+      ease: "Quad.In",
+      onComplete: () => {
+        jet.destroy();
+        this.airstrikeInProgress = false;
+      },
+    });
+  }
+
+  private emitAirstrikeBlast(x: number, y: number) {
+    this.playClaymoreBoomSound(x, y);
+
+    const flash = this.add.circle(x, y, 24, 0xfff1b3, 0.88);
+    flash.setDepth(58);
+    const core = this.add.circle(x, y, 20, 0xff8f3a, 0.86);
+    core.setDepth(57);
+    const shockwave = this.add.circle(x, y, 26, 0xffb66f, 0.5);
+    shockwave.setDepth(56);
+    shockwave.setStrokeStyle(4, 0xffd7a3, 0.74);
+
+    this.tweens.add({
+      targets: flash,
+      radius: 110,
+      alpha: 0,
+      duration: 240,
+      onComplete: () => flash.destroy(),
+    });
+    this.tweens.add({
+      targets: core,
+      radius: 92,
+      alpha: 0,
+      duration: 300,
+      onComplete: () => core.destroy(),
+    });
+    this.tweens.add({
+      targets: shockwave,
+      radius: 170,
+      alpha: 0,
+      duration: 340,
+      onComplete: () => shockwave.destroy(),
+    });
+
+    this.cameras.main.shake(95, 0.002, false);
+  }
+
+  private playJetFlybySound(startX: number, endX: number, sourceY: number, durationMs: number) {
+    if (this.masterSoundVolume <= 0.001) {
+      return;
+    }
+
+    const audioContext = this.getAudioContext();
+    if (!audioContext) {
+      return;
+    }
+
+    const now = audioContext.currentTime;
+    const durationSec = Math.max(0.2, durationMs / 1000);
+    const listenerX = this.player ? this.player.x : this.cameras.main.worldView.centerX;
+    const listenerY = this.player ? this.player.y : this.cameras.main.worldView.centerY;
+
+    const startPan = Phaser.Math.Clamp((startX - listenerX) / 700, -0.95, 0.95);
+    const endPan = Phaser.Math.Clamp((endX - listenerX) / 700, -0.95, 0.95);
+    const sourceDistance = Phaser.Math.Distance.Between(listenerX, listenerY, (startX + endX) * 0.5, sourceY);
+    const distanceFalloff = Phaser.Math.Clamp(1 - sourceDistance / 1500, 0.35, 1);
+
+    const masterGain = audioContext.createGain();
+    masterGain.gain.setValueAtTime(0.0001, now);
+    masterGain.gain.exponentialRampToValueAtTime(0.11 * this.masterSoundVolume * distanceFalloff, now + 0.12);
+    masterGain.gain.setValueAtTime(0.11 * this.masterSoundVolume * distanceFalloff, now + Math.max(0.12, durationSec - 0.15));
+    masterGain.gain.exponentialRampToValueAtTime(0.0001, now + durationSec);
+
+    const panner = audioContext.createStereoPanner();
+    panner.pan.setValueAtTime(startPan, now);
+    panner.pan.linearRampToValueAtTime(endPan, now + durationSec);
+
+    const engineOsc = audioContext.createOscillator();
+    engineOsc.type = "sawtooth";
+    engineOsc.frequency.setValueAtTime(110, now);
+    engineOsc.frequency.linearRampToValueAtTime(74, now + durationSec);
+
+    const engineGain = audioContext.createGain();
+    engineGain.gain.setValueAtTime(0.68, now);
+
+    const engineFilter = audioContext.createBiquadFilter();
+    engineFilter.type = "lowpass";
+    engineFilter.frequency.setValueAtTime(950, now);
+    engineFilter.frequency.linearRampToValueAtTime(620, now + durationSec);
+
+    const rumbleOsc = audioContext.createOscillator();
+    rumbleOsc.type = "triangle";
+    rumbleOsc.frequency.setValueAtTime(58, now);
+    rumbleOsc.frequency.linearRampToValueAtTime(46, now + durationSec);
+
+    const rumbleGain = audioContext.createGain();
+    rumbleGain.gain.setValueAtTime(0.42, now);
+
+    engineOsc.connect(engineGain);
+    engineGain.connect(engineFilter);
+    engineFilter.connect(masterGain);
+
+    rumbleOsc.connect(rumbleGain);
+    rumbleGain.connect(masterGain);
+
+    masterGain.connect(panner);
+    panner.connect(audioContext.destination);
+
+    engineOsc.start(now);
+    rumbleOsc.start(now);
+    engineOsc.stop(now + durationSec);
+    rumbleOsc.stop(now + durationSec);
+
+    engineOsc.onended = () => {
+      engineOsc.disconnect();
+      rumbleOsc.disconnect();
+      engineGain.disconnect();
+      rumbleGain.disconnect();
+      engineFilter.disconnect();
+      masterGain.disconnect();
+      panner.disconnect();
+    };
+  }
+
+  private applyAirstrikeDamageInView() {
+    const view = this.cameras.main.worldView;
+
+    for (const bullet of this.hamasBullets) {
+      bullet.destroy();
+    }
+    this.hamasBullets = [];
+
+    for (const grenade of this.enemyGrenades) {
+      grenade.warningRing?.destroy();
+      grenade.body.destroy();
+    }
+    this.enemyGrenades = [];
+
+    if (
+      this.activeBomb &&
+      this.activeBomb.x >= view.left - 40 &&
+      this.activeBomb.x <= view.right + 40
+    ) {
+      this.clearActiveBomb();
+      this.scheduleNextBombSpawn();
+    }
+
+    if (
+      !this.hamasIsDead &&
+      this.hamasFighter.active &&
+      this.hamasFighter.x >= view.left - 60 &&
+      this.hamasFighter.x <= view.right + 60
+    ) {
+      this.hamasIsDead = true;
+      this.playHamasDeathSound(this.hamasFighter.x, this.hamasFighter.y);
+      this.hamasFighter.setAnimationState("dying");
+      this.kills += 1;
+      this.refreshHud();
+      if (this.kills >= this.targetKills && this.missionState === "running") {
+        this.winMission();
+      } else {
+        this.nextRespawnAt = this.time.now + this.respawnDelayMs;
+      }
+      this.inFiringRange = false;
+    }
   }
 
   private clearActiveBomb() {
@@ -1855,12 +2107,14 @@ export default class GameScene extends Phaser.Scene {
   }
 
   private updateMuteHud() {
-    if (!this.hudMuteEl) {
+    if (!this.hudAudioIconEl) {
       return;
     }
 
-    this.hudMuteEl.textContent = this.quickMuteEnabled ? "Audio: OFF (M)" : "Audio: ON (M)";
-    this.hudMuteEl.classList.toggle("is-muted", this.quickMuteEnabled);
+    this.hudAudioIconEl.textContent = "🔊";
+    this.hudAudioIconEl.classList.toggle("is-muted", this.quickMuteEnabled);
+    this.hudAudioIconEl.title = this.quickMuteEnabled ? "Audio: OFF (M / click)" : "Audio: ON (M / click)";
+    this.hudAudioIconEl.setAttribute("aria-label", this.quickMuteEnabled ? "Audio off" : "Audio on");
   }
 
   private toggleQuickMute() {
@@ -2573,6 +2827,9 @@ export default class GameScene extends Phaser.Scene {
     }
     if (this.hudKillsEl) {
       this.hudKillsEl.textContent = `Vipers Eliminated: ${this.kills}/${this.targetKills}`;
+    }
+    if (this.hudAirstrikesEl) {
+      this.hudAirstrikesEl.textContent = `Airstrikes: ${this.airstrikeCharges}`;
     }
     this.updateLowHealthPulseState();
   }
