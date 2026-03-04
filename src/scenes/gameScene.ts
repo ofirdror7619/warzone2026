@@ -13,6 +13,7 @@ import hamas2IdleSprite from "../assets/hamas-2-sprites/hamas2_idle_transparent.
 import hamas2ThrowSprite from "../assets/hamas-2-sprites/hamas2_throw_transparent.png";
 import hamas2DyingSprite from "../assets/hamas-2-sprites/hamas2_dying_transparent.png";
 import jetSprite from "../assets/airstrike-sprites/jet_transparent.png";
+import doneOperatorSprite from "../assets/drone-operator-sprites/done_operator_transparent.png";
 
 type ActiveBomb = {
   x: number;
@@ -141,6 +142,10 @@ export default class GameScene extends Phaser.Scene {
   private hudStatusEl: HTMLElement | null = null;
   private missionOverlayText: Phaser.GameObjects.Text | null = null;
   private powerupOverlayText: Phaser.GameObjects.Text | null = null;
+  private level2DroneOperator: Phaser.GameObjects.Image | null = null;
+  private level2DroneLabel: Phaser.GameObjects.Text | null = null;
+  private level2DroneShotsRemaining = 0;
+  private level2DroneLowHpBlinkTween: Phaser.Tweens.Tween | null = null;
   private powerupOverlayExpiresAt = 0;
   private countdownOverlayText: Phaser.GameObjects.Text | null = null;
   private introCountdownActive = true;
@@ -244,6 +249,7 @@ export default class GameScene extends Phaser.Scene {
     });
 
     this.load.image("airstrike_jet", jetSprite);
+    this.load.image("done_operator", doneOperatorSprite);
 
     this.load.audio("level_music_1", new URL("../assets/music/music-for-level-1.mp3", import.meta.url).toString());
   }
@@ -360,6 +366,7 @@ export default class GameScene extends Phaser.Scene {
 
     this.refreshHud();
     this.createMissionOverlay();
+    this.spawnLevel2DroneOperator();
     this.startIntroCountdown();
     this.scheduleNextBombSpawn();
     this.scheduleNextPickupSpawn();
@@ -500,13 +507,76 @@ export default class GameScene extends Phaser.Scene {
         continue;
       }
 
-      if (!this.hamasIsDead && this.missionState === "running") {
-        const bulletHitRect = new Phaser.Geom.Rectangle(
-          dir > 0 ? bullet.x + this.playerBulletHitOffsetXForward : bullet.x + this.playerBulletHitOffsetXBackward,
-          bullet.y + this.playerBulletHitOffsetY,
-          this.playerBulletHitWidth,
-          this.playerBulletHitHeight
+      const bulletHitRect = new Phaser.Geom.Rectangle(
+        dir > 0 ? bullet.x + this.playerBulletHitOffsetXForward : bullet.x + this.playerBulletHitOffsetXBackward,
+        bullet.y + this.playerBulletHitOffsetY,
+        this.playerBulletHitWidth,
+        this.playerBulletHitHeight
+      );
+
+      if (this.currentLevel === 2 && this.missionState === "running" && this.level2DroneOperator?.active) {
+        const targetBoundsRaw = this.level2DroneOperator.getBounds();
+        const targetBounds = new Phaser.Geom.Rectangle(
+          targetBoundsRaw.x + targetBoundsRaw.width * 0.22,
+          targetBoundsRaw.y + targetBoundsRaw.height * 0.08,
+          targetBoundsRaw.width * 0.56,
+          targetBoundsRaw.height * 0.88
         );
+
+        if (Phaser.Geom.Intersects.RectangleToRectangle(targetBounds, bulletHitRect)) {
+          this.level2DroneShotsRemaining = Math.max(0, this.level2DroneShotsRemaining - 1);
+
+          if (this.level2DroneShotsRemaining <= 0) {
+            this.level2DroneLowHpBlinkTween?.stop();
+            this.level2DroneLowHpBlinkTween = null;
+            this.level2DroneOperator.clearTint();
+            this.level2DroneOperator.setAlpha(1);
+            this.playHamasDeathSound(this.level2DroneOperator.x, this.level2DroneOperator.y);
+            this.level2DroneOperator.destroy();
+            this.level2DroneOperator = null;
+            this.level2DroneLabel?.destroy();
+            this.level2DroneLabel = null;
+
+            this.kills += 1;
+            this.refreshHud();
+            this.winMission();
+          } else {
+            this.level2DroneOperator.setTintFill(0xffb3b3);
+            this.time.delayedCall(60, () => {
+              this.level2DroneOperator?.clearTint();
+            });
+
+            if (this.level2DroneShotsRemaining === 1 && this.level2DroneOperator && !this.level2DroneLowHpBlinkTween) {
+              this.level2DroneLowHpBlinkTween = this.tweens.add({
+                targets: this.level2DroneOperator,
+                alpha: { from: 1, to: 0.42 },
+                duration: 120,
+                yoyo: true,
+                repeat: -1,
+                ease: "Sine.InOut",
+                onUpdate: () => {
+                  if (!this.level2DroneOperator || !this.level2DroneOperator.active) {
+                    return;
+                  }
+
+                  if (this.level2DroneOperator.alpha < 0.72) {
+                    this.level2DroneOperator.setTint(0xff4d4d);
+                  } else {
+                    this.level2DroneOperator.clearTint();
+                  }
+                },
+              });
+            }
+          }
+
+          bullet.destroy();
+          this.playerBullets.splice(i, 1);
+          this.inFiringRange = false;
+          continue;
+        }
+      }
+
+      if (!this.hamasIsDead && this.missionState === "running") {
 
         if (Phaser.Geom.Intersects.RectangleToRectangle(preciseHamasBounds, bulletHitRect)) {
           this.hamasIsDead = true;
@@ -514,7 +584,8 @@ export default class GameScene extends Phaser.Scene {
           this.hamasFighter.setAnimationState("dying");
           this.kills += 1;
           this.refreshHud();
-          if (this.kills >= this.targetKills && this.missionState === "running") {
+          const requiredKills = this.targetKills;
+          if (this.currentLevel !== 2 && this.kills >= requiredKills && this.missionState === "running") {
             this.winMission();
           } else {
             this.nextRespawnAt = this.time.now + this.respawnDelayMs;
@@ -581,7 +652,7 @@ export default class GameScene extends Phaser.Scene {
     if (this.hamasIsDead) {
       if (
         this.missionState === "running" &&
-        this.kills < this.targetKills &&
+        (this.currentLevel === 2 || this.kills < this.targetKills) &&
         this.nextRespawnAt > 0 &&
         this.time.now >= this.nextRespawnAt
       ) {
@@ -687,7 +758,11 @@ export default class GameScene extends Phaser.Scene {
 
     const aheadBase = Math.max(this.player.x + 380, this.cameras.main.worldView.right + 120);
     const spawnX = this.pickClearGroundSpawnX(aheadBase);
-    this.enemyVariant = Phaser.Math.Between(0, 1) === 0 ? "standard" : "grenadier";
+    if (this.currentLevel === 2) {
+      this.enemyVariant = Phaser.Math.Between(0, 99) < 60 ? "assault" : "grenadier";
+    } else {
+      this.enemyVariant = Phaser.Math.Between(0, 1) === 0 ? "standard" : "grenadier";
+    }
 
     const surfaceTopY = this.ground.y - this.ground.displayHeight * 0.5;
     const spawnY = surfaceTopY - this.enemyFootOffsetPx;
@@ -737,23 +812,25 @@ export default class GameScene extends Phaser.Scene {
   }
 
   private getCurrentFiringRange() {
+    const level2Bonus = this.currentLevel === 2 ? 80 : 0;
     if (this.enemyVariant === "assault") {
-      return this.assaultFiringRange;
+      return this.assaultFiringRange + level2Bonus;
     }
     if (this.enemyVariant === "grenadier") {
-      return 470;
+      return 470 + Math.floor(level2Bonus * 0.8);
     }
-    return this.standardFiringRange;
+    return this.standardFiringRange + level2Bonus;
   }
 
   private getCurrentShotIntervalMs() {
+    const level2Multiplier = this.currentLevel === 2 ? 0.86 : 1;
     if (this.enemyVariant === "assault") {
-      return this.assaultShotIntervalMs;
+      return Math.floor(this.assaultShotIntervalMs * level2Multiplier);
     }
     if (this.enemyVariant === "grenadier") {
-      return this.grenadeThrowIntervalMs;
+      return Math.floor(this.grenadeThrowIntervalMs * level2Multiplier);
     }
-    return this.standardShotIntervalMs;
+    return Math.floor(this.standardShotIntervalMs * level2Multiplier);
   }
 
   private throwEnemyGrenade() {
@@ -1199,7 +1276,7 @@ export default class GameScene extends Phaser.Scene {
     const stars = this.add.graphics();
     stars.setDepth(-980);
     let twinklingStars = 0;
-    for (let i = 0; i < 70; i++) {
+    for (let i = 0; i < 36; i++) {
       const x = Phaser.Math.Between(8, width - 8);
       const y = Phaser.Math.Between(8, Math.floor(height * 0.52));
       const radius = Phaser.Math.Between(1, 2);
@@ -1207,7 +1284,7 @@ export default class GameScene extends Phaser.Scene {
       stars.fillStyle(0xe7eeff, alpha);
       stars.fillCircle(x, y, radius);
 
-      if (twinklingStars < 10 && Math.random() < 0.22) {
+      if (twinklingStars < 5 && Math.random() < 0.18) {
         const twinkle = this.add.circle(x, y, radius + Phaser.Math.FloatBetween(0.35, 0.85), 0xf6fbff, alpha * 0.7);
         twinkle.setDepth(-970);
         this.tweens.add({
@@ -1394,18 +1471,18 @@ export default class GameScene extends Phaser.Scene {
     let twinkleBudget = 18;
     let xFar = 0;
     while (xFar < width) {
-      const blockWidth = Phaser.Math.Between(36, 80);
-      const blockHeight = Phaser.Math.Between(135, 255);
+      const blockWidth = Phaser.Math.Between(72, 140);
+      const blockHeight = Phaser.Math.Between(145, 250);
       const topY = height - 40 - blockHeight;
       skylineFar.fillRect(xFar, topY, blockWidth, blockHeight);
 
-      const cols = Math.max(1, Math.floor((blockWidth - 8) / 10));
-      const rows = Math.max(1, Math.floor((blockHeight - 10) / 12));
+      const cols = Math.max(1, Math.floor((blockWidth - 8) / 18));
+      const rows = Math.max(1, Math.floor((blockHeight - 10) / 20));
       for (let col = 0; col < cols; col++) {
         for (let row = 0; row < rows; row++) {
-          if (Math.random() < 0.33) {
-            const wx = xFar + 4 + col * 10;
-            const wy = topY + 5 + row * 12;
+          if (Math.random() < 0.28) {
+            const wx = xFar + 4 + col * 18;
+            const wy = topY + 5 + row * 20;
             skylineFar.fillStyle(0xffd869, 0.55);
             skylineFar.fillRect(wx, wy, 3, 3);
             if (twinkleBudget > 0 && Math.random() < 0.12) {
@@ -1415,7 +1492,7 @@ export default class GameScene extends Phaser.Scene {
           }
         }
       }
-      xFar += blockWidth + Phaser.Math.Between(2, 10);
+      xFar += blockWidth + Phaser.Math.Between(6, 16);
     }
 
     const arabicSigns = this.add.graphics();
@@ -1461,18 +1538,18 @@ export default class GameScene extends Phaser.Scene {
     let ensuredArabicSignsAtStart = 0;
     let xNear = -10;
     while (xNear < width + 20) {
-      const blockWidth = Phaser.Math.Between(44, 96);
-      const blockHeight = Phaser.Math.Between(105, 195);
+      const blockWidth = Phaser.Math.Between(80, 150);
+      const blockHeight = Phaser.Math.Between(115, 200);
       const topY = height - 30 - blockHeight;
       skylineNear.fillRect(xNear, topY, blockWidth, blockHeight);
 
-      const cols = Math.max(1, Math.floor((blockWidth - 10) / 11));
-      const rows = Math.max(1, Math.floor((blockHeight - 8) / 13));
+      const cols = Math.max(1, Math.floor((blockWidth - 10) / 20));
+      const rows = Math.max(1, Math.floor((blockHeight - 8) / 22));
       for (let col = 0; col < cols; col++) {
         for (let row = 0; row < rows; row++) {
-          if (Math.random() < 0.4) {
-            const wx = xNear + 5 + col * 11;
-            const wy = topY + 4 + row * 13;
+          if (Math.random() < 0.34) {
+            const wx = xNear + 5 + col * 20;
+            const wy = topY + 4 + row * 22;
             skylineNear.fillStyle(0xffe27d, 0.72);
             skylineNear.fillRect(wx, wy, 4, 4);
             if (twinkleBudget > 0 && Math.random() < 0.18) {
@@ -1487,7 +1564,7 @@ export default class GameScene extends Phaser.Scene {
       const forceVisibleStartSigns = inStartZone && ensuredArabicSignsAtStart < 4;
       const shouldDrawArabicSign =
         blockWidth >= 52 &&
-        (forceVisibleStartSigns || Math.random() < (inStartZone ? 0.58 : 0.4));
+        (forceVisibleStartSigns || Math.random() < (inStartZone ? 0.42 : 0.28));
 
       if (shouldDrawArabicSign) {
         drawPseudoArabicSign(arabicSigns, xNear, topY, blockWidth, blockHeight, Phaser.Math.FloatBetween(0.9, 1));
@@ -1496,7 +1573,7 @@ export default class GameScene extends Phaser.Scene {
         }
       }
 
-      xNear += blockWidth + Phaser.Math.Between(0, 8);
+      xNear += blockWidth + Phaser.Math.Between(6, 14);
     }
 
     const horizonGlow = this.add.graphics();
@@ -1525,15 +1602,15 @@ export default class GameScene extends Phaser.Scene {
 
     const roadBricks = this.add.graphics();
     roadBricks.setDepth(-899);
-    const rowCount = 5;
+    const rowCount = 3;
 
     for (let row = 0; row < rowCount; row++) {
-      const rowH = Phaser.Math.Between(14, 19);
+      const rowH = Phaser.Math.Between(16, 20);
       const yBase = roadTop + row * 17 + Phaser.Math.Between(-1, 2);
       let x = Phaser.Math.Between(-22, 10);
 
       while (x < width + 30) {
-        const brickW = Phaser.Math.Between(22, 44);
+        const brickW = Phaser.Math.Between(34, 60);
         const brickH = rowH + Phaser.Math.Between(-2, 2);
         const gap = Phaser.Math.Between(1, 4);
         const topY = yBase + Phaser.Math.Between(-1, 2);
@@ -1615,7 +1692,7 @@ export default class GameScene extends Phaser.Scene {
 
     const rubble = this.add.graphics();
     rubble.setDepth(-894);
-    for (let i = 0; i < 42; i++) {
+    for (let i = 0; i < 24; i++) {
       const rx = biasedRoadX();
       const ry = Phaser.Math.Between(roadTop + 6, height - 4);
       const stoneSize = Phaser.Math.Between(2, 5);
@@ -1648,7 +1725,7 @@ export default class GameScene extends Phaser.Scene {
 
     const dirtSpecks = this.add.graphics();
     dirtSpecks.setDepth(-892);
-    for (let i = 0; i < 160; i++) {
+    for (let i = 0; i < 72; i++) {
       const dx = biasedRoadX();
       const dy = Phaser.Math.Between(roadTop, height);
       const ds = Phaser.Math.Between(1, 2);
@@ -2850,10 +2927,14 @@ export default class GameScene extends Phaser.Scene {
     this.missionOverlayText?.destroy();
     this.powerupOverlayText?.destroy();
 
+    const missionText = this.currentLevel === 2
+      ? "Mission #2: Kill Drone operator"
+      : `Mission #${this.currentLevel} - Eliminate ${this.targetKills} Vipers`;
+
     this.missionOverlayText = this.add.text(
       this.scale.width * 0.5,
       22,
-      `Mission #${this.currentLevel} - Eliminate ${this.targetKills} Vipers`,
+      missionText,
       {
         fontFamily: "Arial",
         fontSize: "30px",
@@ -2881,6 +2962,46 @@ export default class GameScene extends Phaser.Scene {
     this.powerupOverlayText.setScrollFactor(0);
     this.powerupOverlayText.setShadow(0, 0, "#7ec8ff", 18, true, true);
     this.powerupOverlayExpiresAt = 0;
+  }
+
+  private spawnLevel2DroneOperator() {
+    this.level2DroneOperator?.destroy();
+    this.level2DroneOperator = null;
+    this.level2DroneLabel?.destroy();
+    this.level2DroneLabel = null;
+    this.level2DroneLowHpBlinkTween?.stop();
+    this.level2DroneLowHpBlinkTween = null;
+
+    if (this.currentLevel !== 2) {
+      this.level2DroneShotsRemaining = 0;
+      return;
+    }
+
+    this.level2DroneShotsRemaining = 5;
+
+    const groundTopY = this.ground.y - this.ground.displayHeight * 0.5;
+    const spawnX = this.worldWidth - 180;
+    const soldierHeight = this.player?.displayHeight ?? 118;
+    const targetHeight = soldierHeight * 0.96;
+    const footSinkPx = 8;
+
+    this.level2DroneOperator = this.add.image(spawnX, groundTopY + 1, "done_operator");
+    this.level2DroneOperator.setOrigin(0.5, 1);
+    this.level2DroneOperator.displayHeight = targetHeight;
+    this.level2DroneOperator.setY(groundTopY + footSinkPx);
+    this.level2DroneOperator.setDepth(8);
+    this.level2DroneOperator.setFlipX(true);
+
+    this.level2DroneLabel = this.add.text(spawnX, groundTopY - targetHeight - 12, "DRONE OP", {
+      fontFamily: "Arial",
+      fontSize: "14px",
+      color: "#fef3c7",
+      fontStyle: "bold",
+      stroke: "#0b1a30",
+      strokeThickness: 3,
+    });
+    this.level2DroneLabel.setOrigin(0.5);
+    this.level2DroneLabel.setDepth(9);
   }
 
   private startIntroCountdown() {
@@ -3025,7 +3146,9 @@ export default class GameScene extends Phaser.Scene {
     }
 
     if (this.missionState !== "running") {
-      this.powerupOverlayText.setText("");
+      if (this.time.now >= this.powerupOverlayExpiresAt) {
+        this.powerupOverlayText.setText("");
+      }
       return;
     }
 
@@ -3055,7 +3178,11 @@ export default class GameScene extends Phaser.Scene {
       this.hudLivesEl.textContent = `Lives: ${this.lives}`;
     }
     if (this.hudKillsEl) {
-      this.hudKillsEl.textContent = `Vipers Eliminated: ${this.kills}/${this.targetKills}`;
+      if (this.currentLevel === 2) {
+        this.hudKillsEl.textContent = `Kills: ${this.kills}`;
+      } else {
+        this.hudKillsEl.textContent = `Vipers Eliminated: ${this.kills}/${this.targetKills}`;
+      }
     }
     if (this.hudAirstrikesEl) {
       this.hudAirstrikesEl.textContent = `Airstrikes: ${this.airstrikeCharges}`;
@@ -3119,33 +3246,52 @@ export default class GameScene extends Phaser.Scene {
     this.stopLevelMusic();
     this.clearActivePickup();
 
-    if (this.currentLevel === 1) {
-      if (this.missionOverlayText) {
-        this.missionOverlayText.setText("Mission Completed");
-        this.missionOverlayText.setColor("#7ec8ff");
-        this.missionOverlayText.setShadow(0, 0, "#7ec8ff", 24, true, true);
-      }
-      if (this.hudStatusEl) {
-        this.hudStatusEl.textContent = "Mission Completed";
-      }
-      return;
-    }
-
-    const finalLevel = this.currentLevel >= this.maxLevels;
+    const campaignCapLevel = 2;
+    const finalLevel = this.currentLevel >= campaignCapLevel;
 
     if (this.missionOverlayText) {
-      this.missionOverlayText.setText(finalLevel ? "Mission Passed" : `Level ${this.currentLevel} Passed`);
+      if (finalLevel) {
+        this.missionOverlayText.setText("Mission Passed");
+      } else if (this.currentLevel === 1) {
+        this.missionOverlayText.setText("Mission #1 Completed");
+      } else {
+        this.missionOverlayText.setText(`Level ${this.currentLevel} Passed`);
+      }
       this.missionOverlayText.setColor("#86efac");
     }
 
     if (!finalLevel) {
       const nextLevel = this.currentLevel + 1;
-      if (this.hudStatusEl) {
+      const transitionDelayMs = this.currentLevel === 1 ? 5000 : 1400;
+      if (this.currentLevel === 1) {
+        const transitionSeconds = 5;
+        if (this.powerupOverlayText) {
+          this.powerupOverlayText.setText(`Level ${nextLevel} in ${transitionSeconds}s...`);
+          this.powerupOverlayText.setColor("#86efac");
+          this.powerupOverlayText.setShadow(0, 0, "#86efac", 18, true, true);
+          this.powerupOverlayExpiresAt = this.time.now + transitionDelayMs;
+
+          for (let remaining = transitionSeconds - 1; remaining >= 1; remaining--) {
+            const delay = (transitionSeconds - remaining) * 1000;
+            this.time.delayedCall(delay, () => {
+              if (!this.powerupOverlayText || this.missionState !== "won") {
+                return;
+              }
+              this.powerupOverlayText.setText(`Level ${nextLevel} in ${remaining}s...`);
+            });
+          }
+        }
+        if (this.hudStatusEl) {
+          this.hudStatusEl.textContent = "";
+        }
+      } else if (this.hudStatusEl) {
         this.hudStatusEl.textContent = `Loading Mission #${nextLevel}...`;
       }
-      this.time.delayedCall(1400, () => {
+      this.time.delayedCall(transitionDelayMs, () => {
         this.scene.restart({ level: nextLevel, lives: this.lives });
       });
+    } else if (this.hudStatusEl) {
+      this.hudStatusEl.textContent = "";
     }
   }
 
