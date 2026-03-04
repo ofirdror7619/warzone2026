@@ -2889,6 +2889,19 @@ export default class GameScene extends Phaser.Scene {
     this.stopLowHealthPulse();
     this.stopLevelMusic();
     this.clearActivePickup();
+
+    if (this.currentLevel === 1) {
+      if (this.missionOverlayText) {
+        this.missionOverlayText.setText("Mission Completed");
+        this.missionOverlayText.setColor("#7ec8ff");
+        this.missionOverlayText.setShadow(0, 0, "#7ec8ff", 24, true, true);
+      }
+      if (this.hudStatusEl) {
+        this.hudStatusEl.textContent = "Mission Completed";
+      }
+      return;
+    }
+
     const finalLevel = this.currentLevel >= this.maxLevels;
 
     if (this.missionOverlayText) {
